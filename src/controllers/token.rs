@@ -28,8 +28,12 @@ use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GetParams {
+    /// Include tokens that expired within the last `expired_days` days.
+    ///
+    /// By default, expired tokens are excluded from the response.
     expired_days: Option<i32>,
 }
 
@@ -52,6 +56,7 @@ pub struct ListResponse {
 #[utoipa::path(
     get,
     path = "/api/v1/me/tokens",
+    params(GetParams),
     security(("cookie" = [])),
     tag = "api_tokens",
     responses((status = 200, description = "Successful Response", body = inline(ListResponse))),

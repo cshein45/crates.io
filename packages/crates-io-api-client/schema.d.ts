@@ -3393,7 +3393,14 @@ export interface operations {
     };
     list_api_tokens: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Include tokens that expired within the last `expired_days` days.
+                 *
+                 *     By default, expired tokens are excluded from the response.
+                 */
+                expired_days?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
