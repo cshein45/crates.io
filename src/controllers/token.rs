@@ -28,8 +28,12 @@ use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GetParams {
+    /// Include tokens that expired within the last `expired_days` days.
+    ///
+    /// By default, expired tokens are excluded from the response.
     expired_days: Option<i32>,
 }
 
@@ -52,6 +56,7 @@ pub struct ListResponse {
 #[utoipa::path(
     get,
     path = "/api/v1/me/tokens",
+    params(GetParams),
     security(("cookie" = [])),
     tag = "api_tokens",
     responses((status = 200, description = "Successful Response", body = inline(ListResponse))),
@@ -80,8 +85,8 @@ pub async fn list_api_tokens(
     Ok(json!({ "api_tokens": tokens }))
 }
 
-/// The incoming serialization format for the `ApiToken` model.
-#[derive(Deserialize)]
+/// Properties for a new API token.
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct NewApiToken {
     name: String,
     crate_scopes: Option<Vec<String>>,
@@ -89,9 +94,10 @@ pub struct NewApiToken {
     expired_at: Option<DateTime<Utc>>,
 }
 
-/// The incoming serialization format for the `ApiToken` model.
-#[derive(Deserialize)]
+/// Request body for creating a new API token.
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct NewApiTokenRequest {
+    #[schema(inline)]
     api_token: NewApiToken,
 }
 
@@ -104,6 +110,7 @@ pub struct CreateResponse {
 #[utoipa::path(
     put,
     path = "/api/v1/me/tokens",
+    request_body = inline(NewApiTokenRequest),
     security(("cookie" = [])),
     tag = "api_tokens",
     responses((status = 200, description = "Successful Response", body = inline(CreateResponse))),

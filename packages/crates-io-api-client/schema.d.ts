@@ -3393,7 +3393,14 @@ export interface operations {
     };
     list_api_tokens: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Include tokens that expired within the last `expired_days` days.
+                 *
+                 *     By default, expired tokens are excluded from the response.
+                 */
+                expired_days?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3420,7 +3427,20 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Properties for a new API token. */
+                    api_token: {
+                        crate_scopes?: string[] | null;
+                        endpoint_scopes?: string[] | null;
+                        /** Format: date-time */
+                        expired_at?: string | null;
+                        name: string;
+                    };
+                };
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

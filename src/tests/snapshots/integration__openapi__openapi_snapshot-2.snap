@@ -3972,6 +3972,18 @@ expression: response.json()
     "/api/v1/me/tokens": {
       "get": {
         "operationId": "list_api_tokens",
+        "parameters": [
+          {
+            "description": "Include tokens that expired within the last `expired_days` days.\n\nBy default, expired tokens are excluded from the response.",
+            "in": "query",
+            "name": "expired_days",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -4007,6 +4019,59 @@ expression: response.json()
       },
       "put": {
         "operationId": "create_api_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "Request body for creating a new API token.",
+                "properties": {
+                  "api_token": {
+                    "description": "Properties for a new API token.",
+                    "properties": {
+                      "crate_scopes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
+                      "endpoint_scopes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
+                      "expired_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "api_token"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
