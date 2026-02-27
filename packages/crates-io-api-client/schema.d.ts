@@ -3427,7 +3427,20 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Properties for a new API token. */
+                    api_token: {
+                        crate_scopes?: string[] | null;
+                        endpoint_scopes?: string[] | null;
+                        /** Format: date-time */
+                        expired_at?: string | null;
+                        name: string;
+                    };
+                };
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

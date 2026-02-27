@@ -85,8 +85,8 @@ pub async fn list_api_tokens(
     Ok(json!({ "api_tokens": tokens }))
 }
 
-/// The incoming serialization format for the `ApiToken` model.
-#[derive(Deserialize)]
+/// Properties for a new API token.
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct NewApiToken {
     name: String,
     crate_scopes: Option<Vec<String>>,
@@ -94,9 +94,10 @@ pub struct NewApiToken {
     expired_at: Option<DateTime<Utc>>,
 }
 
-/// The incoming serialization format for the `ApiToken` model.
-#[derive(Deserialize)]
+/// Request body for creating a new API token.
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct NewApiTokenRequest {
+    #[schema(inline)]
     api_token: NewApiToken,
 }
 
@@ -109,6 +110,7 @@ pub struct CreateResponse {
 #[utoipa::path(
     put,
     path = "/api/v1/me/tokens",
+    request_body = inline(NewApiTokenRequest),
     security(("cookie" = [])),
     tag = "api_tokens",
     responses((status = 200, description = "Successful Response", body = inline(CreateResponse))),

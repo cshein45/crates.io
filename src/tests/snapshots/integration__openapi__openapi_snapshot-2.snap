@@ -4019,6 +4019,59 @@ expression: response.json()
       },
       "put": {
         "operationId": "create_api_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "Request body for creating a new API token.",
+                "properties": {
+                  "api_token": {
+                    "description": "Properties for a new API token.",
+                    "properties": {
+                      "crate_scopes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
+                      "endpoint_scopes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
+                      "expired_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "api_token"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
