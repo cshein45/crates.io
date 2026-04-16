@@ -164,6 +164,22 @@ impl Repository {
         Self::relative_index_file_helper(&name).join("/")
     }
 
+    /// Reads the contents of the index entry for the given crate name.
+    ///
+    /// Returns `Ok(None)` if no entry exists for the crate.
+    pub fn read_entry(&self, name: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let path = self
+            .checkout_path
+            .path()
+            .join(Self::relative_index_file(name));
+
+        match std::fs::read(&path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Returns the [Object ID](git2::Oid) of the currently checked out commit
     /// in the local crate index repository.
     ///
@@ -371,4 +387,46 @@ pub fn run_via_cli(command: &mut Command, credentials: &Credentials) -> anyhow::
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::UpstreamIndex;
+    use claims::{assert_none, assert_ok_eq, assert_some_eq};
+
+    fn setup() -> (UpstreamIndex, Repository) {
+        let upstream = UpstreamIndex::new().unwrap();
+        let config = RepositoryConfig {
+            index_location: upstream.url(),
+            credentials: Credentials::Missing,
+        };
+        let repo = Repository::open(&config).unwrap();
+        (upstream, repo)
+    }
+
+    #[test]
+    fn read_entry_missing() {
+        let (_upstream, repo) = setup();
+        assert_ok_eq!(repo.read_entry("serde"), None::<Vec<u8>>);
+    }
+
+    #[test]
+    fn read_entry_present() {
+        let (upstream, repo) = setup();
+        upstream.write_file("se/rd/serde", "hello\n").unwrap();
+        repo.reset_head().unwrap();
+
+        let entry = repo.read_entry("serde").unwrap();
+        assert_some_eq!(entry, b"hello\n".to_vec());
+    }
+
+    #[test]
+    fn read_entry_ignores_top_level_files() {
+        let (upstream, repo) = setup();
+        upstream.write_file("config.json", "{}").unwrap();
+        repo.reset_head().unwrap();
+
+        assert_none!(repo.read_entry("config.json").unwrap());
+    }
 }

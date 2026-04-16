@@ -10,7 +10,7 @@ mod data;
 pub mod features;
 mod repo;
 mod ser;
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
 pub use crate::credentials::Credentials;
