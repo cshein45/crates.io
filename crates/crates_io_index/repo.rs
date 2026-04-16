@@ -164,6 +164,33 @@ impl Repository {
         Self::relative_index_file_helper(&name).join("/")
     }
 
+    /// Returns the crate names of all entries currently stored in the index.
+    ///
+    /// Top-level files (e.g. `config.json`) are excluded; only blobs nested
+    /// under the sharded `N[/prefix]/name` layout are returned.
+    pub fn list_entries(&self) -> anyhow::Result<Vec<String>> {
+        let tree = self
+            .repository
+            .head()
+            .context("Failed to read HEAD reference")?
+            .peel_to_tree()
+            .context("Failed to find tree for HEAD")?;
+
+        let mut names = Vec::new();
+        tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+            if !root.is_empty()
+                && entry.kind() == Some(git2::ObjectType::Blob)
+                && let Some(name) = entry.name()
+            {
+                names.push(name.to_string());
+            }
+            git2::TreeWalkResult::Ok
+        })
+        .context("Failed to walk HEAD tree")?;
+
+        Ok(names)
+    }
+
     /// Reads the contents of the index entry for the given crate name.
     ///
     /// Returns `Ok(None)` if no entry exists for the crate.
@@ -428,5 +455,35 @@ mod tests {
         repo.reset_head().unwrap();
 
         assert_none!(repo.read_entry("config.json").unwrap());
+    }
+
+    #[test]
+    fn list_entries_empty() {
+        let (_upstream, repo) = setup();
+        assert_ok_eq!(repo.list_entries(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn list_entries_returns_crate_names() {
+        let (upstream, repo) = setup();
+        upstream.write_file("1/a", "").unwrap();
+        upstream.write_file("2/ab", "").unwrap();
+        upstream.write_file("3/a/abc", "").unwrap();
+        upstream.write_file("se/rd/serde", "").unwrap();
+        repo.reset_head().unwrap();
+
+        let mut entries = repo.list_entries().unwrap();
+        entries.sort();
+        assert_eq!(entries, vec!["a", "ab", "abc", "serde"]);
+    }
+
+    #[test]
+    fn list_entries_excludes_top_level_files() {
+        let (upstream, repo) = setup();
+        upstream.write_file("config.json", "{}").unwrap();
+        upstream.write_file("se/rd/serde", "").unwrap();
+        repo.reset_head().unwrap();
+
+        assert_ok_eq!(repo.list_entries(), vec!["serde".to_string()]);
     }
 }
