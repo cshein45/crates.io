@@ -94,6 +94,7 @@ impl Repository {
         run_via_cli(
             Command::new("git").args([
                 "clone",
+                "--bare",
                 "--single-branch",
                 repository_config.index_location.as_str(),
                 checkout_path_str,
@@ -102,7 +103,7 @@ impl Repository {
         )
         .context("Failed to clone index repository")?;
 
-        let repository = git2::Repository::open(checkout_path.path())
+        let repository = git2::Repository::open_bare(checkout_path.path())
             .context("Failed to open cloned index repository")?;
 
         // All commits to the index registry made through crates.io will be made by bors, the Rust
