@@ -4,7 +4,7 @@ use anyhow::{Context, anyhow};
 use base64::{Engine, engine::general_purpose};
 use crates_io_env_vars::{required_var, required_var_parsed, var};
 use secrecy::{ExposeSecret, SecretString};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -175,10 +175,6 @@ impl Repository {
 
     pub(crate) fn git_repo(&self) -> &git2::Repository {
         &self.repository
-    }
-
-    pub(crate) fn workdir(&self) -> &Path {
-        self.checkout_path.path()
     }
 
     /// Returns the crate names of all entries currently stored in the index.
