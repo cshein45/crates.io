@@ -50,31 +50,27 @@ impl BackgroundJob for SyncToGitIndex {
 
         spawn_blocking(move || {
             let repo = env.lock_index()?;
-            let dst = repo.index_file(&crate_name);
-
-            // Read the previous crate contents
-            let old = match fs::read_to_string(&dst) {
-                Ok(content) => Some(content),
-                Err(error) if error.kind() == ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
+            let old = repo.read_entry(&crate_name)?;
 
             let commit_and_push_start = Instant::now();
             match (old, new) {
                 (None, Some(new)) => {
-                    fs::create_dir_all(dst.parent().unwrap())?;
-                    let mut file = File::create(&dst)?;
-                    file.write_all(new.as_bytes())?;
-                    repo.commit_and_push(&format!("Create crate `{}`", &crate_name), &[&dst])?;
+                    let msg = format!("Create crate `{crate_name}`");
+                    let mut builder = repo.commit_builder(msg)?;
+                    builder.upsert_entry(&crate_name, new.as_bytes())?;
+                    builder.commit_and_push()?;
                 }
-                (Some(old), Some(new)) if old != new => {
-                    let mut file = File::create(&dst)?;
-                    file.write_all(new.as_bytes())?;
-                    repo.commit_and_push(&format!("Update crate `{}`", &crate_name), &[&dst])?;
+                (Some(old), Some(new)) if old != new.as_bytes() => {
+                    let msg = format!("Update crate `{crate_name}`");
+                    let mut builder = repo.commit_builder(msg)?;
+                    builder.upsert_entry(&crate_name, new.as_bytes())?;
+                    builder.commit_and_push()?;
                 }
                 (Some(_old), None) => {
-                    fs::remove_file(&dst)?;
-                    repo.commit_and_push(&format!("Delete crate `{}`", &crate_name), &[&dst])?;
+                    let msg = format!("Delete crate `{crate_name}`");
+                    let mut builder = repo.commit_builder(msg)?;
+                    builder.remove_entry(&crate_name)?;
+                    builder.commit_and_push()?;
                 }
                 _ => debug!("Skipping sync because index is up-to-date"),
             }
