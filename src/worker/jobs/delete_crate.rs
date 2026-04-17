@@ -61,7 +61,7 @@ impl BackgroundJob for DeleteCrateFromStorage {
         InvalidateCdns::new(
             crate_file_paths
                 .into_iter()
-                .chain(readme_paths.into_iter())
+                .chain(readme_paths)
                 .chain(std::iter::once(format!("og-images/{name}.png").into()))
                 .chain(std::iter::once(object_store::path::Path::from(&feed_id))),
         )
