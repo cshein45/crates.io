@@ -212,15 +212,25 @@ impl Repository {
     ///
     /// Returns `Ok(None)` if no entry exists for the crate.
     pub fn read_entry(&self, name: &str) -> anyhow::Result<Option<Vec<u8>>> {
-        let path = self
-            .checkout_path
-            .path()
-            .join(Self::relative_index_file(name));
+        let tree = self
+            .repository
+            .head()
+            .context("Failed to read HEAD reference")?
+            .peel_to_tree()
+            .context("Failed to find tree for HEAD")?;
 
-        match std::fs::read(&path) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.into()),
+        let path = Self::relative_index_file(name);
+        match tree.get_path(&path) {
+            Ok(entry) => {
+                let blob = entry
+                    .to_object(&self.repository)
+                    .context("Failed to resolve tree entry")?
+                    .peel_to_blob()
+                    .context("Failed to peel tree entry to blob")?;
+                Ok(Some(blob.content().to_vec()))
+            }
+            Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(error) => Err(error).context("Failed to look up tree entry"),
         }
     }
 
