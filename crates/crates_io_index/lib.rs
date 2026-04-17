@@ -5,6 +5,7 @@ extern crate serde;
 #[macro_use]
 extern crate tracing;
 
+mod commit_builder;
 mod credentials;
 mod data;
 pub mod features;
@@ -13,6 +14,7 @@ mod ser;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
+pub use crate::commit_builder::CommitBuilder;
 pub use crate::credentials::Credentials;
 pub use crate::data::{Crate, Dependency, DependencyKind};
 pub use crate::repo::{Repository, RepositoryConfig};

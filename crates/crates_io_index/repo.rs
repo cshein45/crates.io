@@ -1,3 +1,4 @@
+use crate::commit_builder::CommitBuilder;
 use crate::credentials::Credentials;
 use anyhow::{Context, anyhow};
 use base64::{Engine, engine::general_purpose};
@@ -162,6 +163,33 @@ impl Repository {
     pub fn relative_index_file_for_url(name: &str) -> String {
         let name = name.to_lowercase();
         Self::relative_index_file_helper(&name).join("/")
+    }
+
+    /// Starts a new commit targeting the `master` branch.
+    ///
+    /// See [`Self::commit_builder_to`] for details.
+    pub fn commit_builder(&self, msg: impl Into<String>) -> anyhow::Result<CommitBuilder<'_>> {
+        CommitBuilder::new(self, msg, "master")
+    }
+
+    /// Starts a new commit targeting the given remote branch.
+    ///
+    /// Stage changes on the returned [`CommitBuilder`] and call
+    /// [`CommitBuilder::commit_and_push`] to finalize them.
+    pub fn commit_builder_to(
+        &self,
+        msg: impl Into<String>,
+        branch: impl Into<String>,
+    ) -> anyhow::Result<CommitBuilder<'_>> {
+        CommitBuilder::new(self, msg, branch)
+    }
+
+    pub(crate) fn git_repo(&self) -> &git2::Repository {
+        &self.repository
+    }
+
+    pub(crate) fn workdir(&self) -> &Path {
+        self.checkout_path.path()
     }
 
     /// Returns the crate names of all entries currently stored in the index.
