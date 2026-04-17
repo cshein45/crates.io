@@ -125,17 +125,6 @@ impl Repository {
         })
     }
 
-    /// Returns the absolute path to the crate index file that corresponds to
-    /// the given crate name.
-    ///
-    /// This is similar to [Self::relative_index_file], but returns the absolute
-    /// path.
-    pub fn index_file(&self, name: &str) -> PathBuf {
-        self.checkout_path
-            .path()
-            .join(Self::relative_index_file(name))
-    }
-
     /// Returns the relative path to the crate index file.
     /// Does not perform conversion to lowercase.
     fn relative_index_file_helper(name: &str) -> Vec<&str> {
@@ -248,37 +237,6 @@ impl Repository {
         Ok(head.target().unwrap())
     }
 
-    /// Commits the specified files with the specified commit message and pushes
-    /// the commit to the `master` branch on the `origin` remote.
-    ///
-    /// Note that `modified_files` expects file paths **relative** to the
-    /// repository working folder!
-    #[instrument(skip_all, fields(message = %msg, num_files = modified_files.len()))]
-    fn perform_commit_and_push(&self, msg: &str, modified_files: &[&Path]) -> anyhow::Result<()> {
-        let mut index = self.repository.index()?;
-
-        for modified_file in modified_files {
-            if self.checkout_path.path().join(modified_file).exists() {
-                index.add_path(modified_file)?;
-            } else {
-                index.remove_path(modified_file)?;
-            }
-        }
-
-        index.write()?;
-        let tree_id = index.write_tree()?;
-        let tree = self.repository.find_tree(tree_id)?;
-
-        // git commit -m "..."
-        let head = self.head_oid()?;
-        let parent = self.repository.find_commit(head)?;
-        let sig = self.repository.signature()?;
-        self.repository
-            .commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&parent])?;
-
-        self.push()
-    }
-
     /// Gets a list of files that have been modified since a given `starting_commit`
     /// (use `starting_commit = None` for a list of all files).
     #[instrument(skip_all)]
@@ -322,36 +280,6 @@ impl Repository {
             .collect();
 
         Ok(files)
-    }
-
-    /// Push the current branch to the provided refname
-    #[instrument(skip_all)]
-    fn push(&self) -> anyhow::Result<()> {
-        self.run_command(Command::new("git").args(["push", "origin", "HEAD:master"]))
-    }
-
-    /// Commits the specified files with the specified commit message and pushes
-    /// the commit to the `master` branch on the `origin` remote.
-    ///
-    /// Note that `modified_files` expects **absolute** file paths!
-    ///
-    /// This function also prints the commit message and a success or failure
-    /// message to the console.
-    pub fn commit_and_push(&self, message: &str, modified_files: &[&Path]) -> anyhow::Result<()> {
-        info!("Committing and pushing \"{message}\"");
-
-        let checkout_path = self.checkout_path.path();
-        let relative_paths: Vec<&Path> = modified_files
-            .iter()
-            .map(|p| p.strip_prefix(checkout_path))
-            .collect::<Result<_, _>>()?;
-
-        self.perform_commit_and_push(message, &relative_paths)
-            .map(|_| info!("Commit and push finished for \"{message}\""))
-            .map_err(|err| {
-                error!(?err, "Commit and push for \"{message}\" errored");
-                err
-            })
     }
 
     /// Fetches any changes from the `origin` remote and performs a hard reset
