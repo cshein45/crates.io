@@ -9,13 +9,22 @@ use tracing::{info, instrument};
 /// [`Repository::commit_builder_to`]. Stage changes through [`Self::upsert_entry`]
 /// and [`Self::remove_entry`], then call [`Self::commit_and_push`] to write the
 /// commit and push it to the target branch. Dropping the builder without
-/// calling `commit_and_push` leaves the staged worktree writes in place; they
-/// will be cleaned up by the next [`Repository::reset_head`] call.
+/// calling `commit_and_push` discards the staged operations; any blobs that
+/// were written to the ODB become unreachable and will be cleaned up by
+/// `git gc`.
+///
+/// ### Limitation
+///
+/// Each path may be touched at most once per builder: mixing or repeating
+/// `upsert_entry` / `remove_entry` for the same `name` is unsupported and
+/// will fail at commit time. libgit2's `git_tree_create_updated` rejects
+/// duplicate operations on the same path, upserts of previously-removed
+/// paths, and type-changing upserts.
 pub struct CommitBuilder<'a> {
     repo: &'a Repository,
     msg: String,
     branch: String,
-    index: git2::Index,
+    tub: git2::build::TreeUpdateBuilder,
 }
 
 impl<'a> CommitBuilder<'a> {
@@ -24,47 +33,31 @@ impl<'a> CommitBuilder<'a> {
         msg: impl Into<String>,
         branch: impl Into<String>,
     ) -> anyhow::Result<Self> {
-        let index = repo
-            .git_repo()
-            .index()
-            .context("Failed to open git index")?;
         Ok(Self {
             repo,
             msg: msg.into(),
             branch: branch.into(),
-            index,
+            tub: git2::build::TreeUpdateBuilder::new(),
         })
     }
 
     /// Stage `bytes` as the contents of the index entry for `name`, creating
     /// or overwriting the entry.
     pub fn upsert_entry(&mut self, name: &str, bytes: &[u8]) -> anyhow::Result<()> {
-        let rel = Repository::relative_index_file(name);
-        let abs = self.repo.workdir().join(&rel);
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create parent directory for `{}`", abs.display())
-            })?;
-        }
-        std::fs::write(&abs, bytes)
-            .with_context(|| format!("Failed to write `{}`", abs.display()))?;
-        self.index
-            .add_path(&rel)
-            .with_context(|| format!("Failed to stage `{}`", rel.display()))?;
+        let oid = self
+            .repo
+            .git_repo()
+            .blob(bytes)
+            .with_context(|| format!("Failed to write blob for `{name}`"))?;
+        let path = Repository::relative_index_file_for_url(name);
+        self.tub.upsert(&path, oid, git2::FileMode::Blob);
         Ok(())
     }
 
-    /// Stage removal of the index entry for `name`. No-op if no entry exists.
+    /// Stage removal of the index entry for `name`.
     pub fn remove_entry(&mut self, name: &str) -> anyhow::Result<()> {
-        let rel = Repository::relative_index_file(name);
-        let abs = self.repo.workdir().join(&rel);
-        if abs.exists() {
-            std::fs::remove_file(&abs)
-                .with_context(|| format!("Failed to remove `{}`", abs.display()))?;
-        }
-        self.index
-            .remove_path(&rel)
-            .with_context(|| format!("Failed to unstage `{}`", rel.display()))?;
+        let path = Repository::relative_index_file_for_url(name);
+        self.tub.remove(&path);
         Ok(())
     }
 
@@ -77,9 +70,12 @@ impl<'a> CommitBuilder<'a> {
     pub fn commit_and_push(mut self) -> anyhow::Result<()> {
         let gitrepo = self.repo.git_repo();
         let parent = gitrepo.find_commit(self.repo.head_oid()?)?;
+        let parent_tree = parent.tree().context("Failed to load parent tree")?;
 
-        self.index.write().context("Failed to write git index")?;
-        let tree_oid = self.index.write_tree().context("Failed to write tree")?;
+        let tree_oid = self
+            .tub
+            .create_updated(gitrepo, &parent_tree)
+            .context("Failed to build updated tree")?;
 
         if tree_oid == parent.tree_id() {
             info!("No changes to commit");
@@ -172,19 +168,6 @@ mod tests {
 
         let mut builder = commit_builder(&repo, "no-op upsert");
         builder.upsert_entry("serde", b"hello\n").unwrap();
-        builder.commit_and_push().unwrap();
-
-        assert_eq!(upstream.list_commits().unwrap(), before);
-    }
-
-    #[test]
-    fn upsert_then_remove_same_entry_does_not_commit() {
-        let (upstream, repo) = setup();
-        let before = upstream.list_commits().unwrap();
-
-        let mut builder = commit_builder(&repo, "no-op");
-        builder.upsert_entry("serde", b"hello\n").unwrap();
-        builder.remove_entry("serde").unwrap();
         builder.commit_and_push().unwrap();
 
         assert_eq!(upstream.list_commits().unwrap(), before);
