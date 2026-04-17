@@ -288,8 +288,8 @@ impl Repository {
         Ok(files)
     }
 
-    /// Fetches any changes from the `origin` remote and performs a hard reset
-    /// to the tip of the `origin/master` branch.
+    /// Fetches any changes from the `origin` remote and force-updates the
+    /// local `refs/heads/master` ref to the fetched tip.
     #[instrument(skip_all)]
     pub fn reset_head(&self) -> anyhow::Result<()> {
         let original_head = self.head_oid()?;
@@ -298,15 +298,16 @@ impl Repository {
         self.run_command(Command::new("git").args(["fetch", "origin", "master"]))?;
         info!(duration = fetch_start.elapsed().as_nanos(), "Index fetched");
 
-        let reset_start = Instant::now();
-        self.run_command(Command::new("git").args(["reset", "--hard", "origin/master"]))?;
-        info!(duration = reset_start.elapsed().as_nanos(), "Index reset");
+        let fetch_head = self
+            .repository
+            .refname_to_id("FETCH_HEAD")
+            .context("Failed to resolve FETCH_HEAD")?;
+        self.repository
+            .reference("refs/heads/master", fetch_head, true, "reset_head")
+            .context("Failed to update refs/heads/master")?;
 
         let head = self.head_oid()?;
         if head != original_head {
-            // Ensure that the internal state of `self.repository` is updated correctly
-            self.repository.checkout_head(None)?;
-
             info!("Index reset from {original_head} to {head}");
         }
 
