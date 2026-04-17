@@ -1,5 +1,6 @@
 mod generate_og_image;
 mod git;
+mod normalize_index;
 mod readmes;
 mod rss;
 mod send_publish_notifications;
