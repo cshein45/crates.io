@@ -233,7 +233,9 @@ impl Repository {
                 Ok(Some(blob.content().to_vec()))
             }
             Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(None),
-            Err(error) => Err(error).context("Failed to look up tree entry"),
+            Err(error) => {
+                Err(error).with_context(|| format!("Failed to look up tree entry for `{name}`"))
+            }
         }
     }
 
@@ -391,7 +393,7 @@ pub fn run_via_cli(command: &mut Command, credentials: &Credentials) -> anyhow::
 mod tests {
     use super::*;
     use crate::testing::UpstreamIndex;
-    use claims::{assert_none, assert_ok_eq, assert_some_eq};
+    use claims::{assert_err, assert_none, assert_ok_eq, assert_some_eq};
 
     fn setup() -> (UpstreamIndex, Repository) {
         let upstream = UpstreamIndex::new().unwrap();
@@ -417,6 +419,17 @@ mod tests {
 
         let entry = repo.read_entry("serde").unwrap();
         assert_some_eq!(entry, b"hello\n".to_vec());
+    }
+
+    #[test]
+    fn read_entry_error_mentions_name() {
+        let (_upstream, repo) = setup();
+
+        // A null byte in the crate name forces `git2` to fail the path
+        // conversion with a non-`NotFound` error, exercising the error
+        // context branch of `read_entry()`.
+        let err = assert_err!(repo.read_entry("\0serde"));
+        insta::assert_snapshot!(err, @"Failed to look up tree entry for `\0serde`");
     }
 
     #[test]
