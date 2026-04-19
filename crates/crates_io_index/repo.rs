@@ -180,8 +180,9 @@ impl Repository {
 
     /// Returns the crate names of all entries currently stored in the index.
     ///
-    /// Top-level files (e.g. `config.json`) are excluded; only blobs nested
-    /// under the sharded `N[/prefix]/name` layout are returned.
+    /// Top-level files (e.g. `config.json`) and the top-level `.github`
+    /// folder are excluded; only blobs nested under the sharded
+    /// `N[/prefix]/name` layout are returned.
     pub fn list_entries(&self) -> anyhow::Result<Vec<String>> {
         let tree = self
             .repository
@@ -192,6 +193,11 @@ impl Repository {
 
         let mut names = Vec::new();
         tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+            // Skip the top-level `.github` folder (GitHub Actions workflows, etc.).
+            if root.is_empty() && entry.name() == Some(".github") {
+                return git2::TreeWalkResult::Skip;
+            }
+
             if !root.is_empty()
                 && entry.kind() == Some(git2::ObjectType::Blob)
                 && let Some(name) = entry.name()
@@ -446,6 +452,18 @@ mod tests {
     fn list_entries_excludes_top_level_files() {
         let (upstream, repo) = setup();
         upstream.write_file("config.json", "{}").unwrap();
+        upstream.write_file("se/rd/serde", "").unwrap();
+        repo.reset_head().unwrap();
+
+        assert_ok_eq!(repo.list_entries(), vec!["serde".to_string()]);
+    }
+
+    #[test]
+    fn list_entries_excludes_github_folder() {
+        let (upstream, repo) = setup();
+        upstream
+            .write_file(".github/workflows/ci.yml", "name: CI\n")
+            .unwrap();
         upstream.write_file("se/rd/serde", "").unwrap();
         repo.reset_head().unwrap();
 
