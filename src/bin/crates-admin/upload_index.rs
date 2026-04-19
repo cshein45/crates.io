@@ -1,5 +1,5 @@
 use crate::dialoguer;
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use crates_io::storage::Storage;
 use crates_io::tasks::spawn_blocking;
 use crates_io_index::{Repository, RepositoryConfig};
@@ -52,13 +52,14 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
             anyhow!("Failed to convert file name to utf8: {file_name}",)
         })?;
 
-        let path = repo.index_file(crate_name);
-        if !path.exists() {
+        let Some(bytes) = repo.read_entry(crate_name)? else {
             pb.suspend(|| println!("skipping file `{crate_name}`"));
             continue;
-        }
+        };
 
-        let contents = tokio::fs::read_to_string(&path).await?;
+        let contents = String::from_utf8(bytes)
+            .with_context(|| format!("Failed to decode `{crate_name}` as UTF-8"))?;
+
         storage.sync_index(crate_name, Some(contents)).await?;
     }
 

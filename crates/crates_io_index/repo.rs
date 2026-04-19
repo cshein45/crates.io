@@ -1,9 +1,10 @@
+use crate::commit_builder::CommitBuilder;
 use crate::credentials::Credentials;
 use anyhow::{Context, anyhow};
 use base64::{Engine, engine::general_purpose};
 use crates_io_env_vars::{required_var, required_var_parsed, var};
 use secrecy::{ExposeSecret, SecretString};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -93,6 +94,7 @@ impl Repository {
         run_via_cli(
             Command::new("git").args([
                 "clone",
+                "--bare",
                 "--single-branch",
                 repository_config.index_location.as_str(),
                 checkout_path_str,
@@ -101,7 +103,7 @@ impl Repository {
         )
         .context("Failed to clone index repository")?;
 
-        let repository = git2::Repository::open(checkout_path.path())
+        let repository = git2::Repository::open_bare(checkout_path.path())
             .context("Failed to open cloned index repository")?;
 
         // All commits to the index registry made through crates.io will be made by bors, the Rust
@@ -122,17 +124,6 @@ impl Repository {
             repository,
             credentials: repository_config.credentials.clone(),
         })
-    }
-
-    /// Returns the absolute path to the crate index file that corresponds to
-    /// the given crate name.
-    ///
-    /// This is similar to [Self::relative_index_file], but returns the absolute
-    /// path.
-    pub fn index_file(&self, name: &str) -> PathBuf {
-        self.checkout_path
-            .path()
-            .join(Self::relative_index_file(name))
     }
 
     /// Returns the relative path to the crate index file.
@@ -164,6 +155,90 @@ impl Repository {
         Self::relative_index_file_helper(&name).join("/")
     }
 
+    /// Starts a new commit targeting the `master` branch.
+    ///
+    /// See [`Self::commit_builder_to`] for details.
+    pub fn commit_builder(&self, msg: impl Into<String>) -> anyhow::Result<CommitBuilder<'_>> {
+        CommitBuilder::new(self, msg, "master")
+    }
+
+    /// Starts a new commit targeting the given remote branch.
+    ///
+    /// Stage changes on the returned [`CommitBuilder`] and call
+    /// [`CommitBuilder::commit_and_push`] to finalize them.
+    pub fn commit_builder_to(
+        &self,
+        msg: impl Into<String>,
+        branch: impl Into<String>,
+    ) -> anyhow::Result<CommitBuilder<'_>> {
+        CommitBuilder::new(self, msg, branch)
+    }
+
+    pub(crate) fn git_repo(&self) -> &git2::Repository {
+        &self.repository
+    }
+
+    /// Returns the crate names of all entries currently stored in the index.
+    ///
+    /// Top-level files (e.g. `config.json`) and the top-level `.github`
+    /// folder are excluded; only blobs nested under the sharded
+    /// `N[/prefix]/name` layout are returned.
+    pub fn list_entries(&self) -> anyhow::Result<Vec<String>> {
+        let tree = self
+            .repository
+            .head()
+            .context("Failed to read HEAD reference")?
+            .peel_to_tree()
+            .context("Failed to find tree for HEAD")?;
+
+        let mut names = Vec::new();
+        tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+            // Skip the top-level `.github` folder (GitHub Actions workflows, etc.).
+            if root.is_empty() && entry.name() == Some(".github") {
+                return git2::TreeWalkResult::Skip;
+            }
+
+            if !root.is_empty()
+                && entry.kind() == Some(git2::ObjectType::Blob)
+                && let Some(name) = entry.name()
+            {
+                names.push(name.to_string());
+            }
+            git2::TreeWalkResult::Ok
+        })
+        .context("Failed to walk HEAD tree")?;
+
+        Ok(names)
+    }
+
+    /// Reads the contents of the index entry for the given crate name.
+    ///
+    /// Returns `Ok(None)` if no entry exists for the crate.
+    pub fn read_entry(&self, name: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let tree = self
+            .repository
+            .head()
+            .context("Failed to read HEAD reference")?
+            .peel_to_tree()
+            .context("Failed to find tree for HEAD")?;
+
+        let path = Self::relative_index_file(name);
+        match tree.get_path(&path) {
+            Ok(entry) => {
+                let blob = entry
+                    .to_object(&self.repository)
+                    .context("Failed to resolve tree entry")?
+                    .peel_to_blob()
+                    .context("Failed to peel tree entry to blob")?;
+                Ok(Some(blob.content().to_vec()))
+            }
+            Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(error) => {
+                Err(error).with_context(|| format!("Failed to look up tree entry for `{name}`"))
+            }
+        }
+    }
+
     /// Returns the [Object ID](git2::Oid) of the currently checked out commit
     /// in the local crate index repository.
     ///
@@ -175,37 +250,6 @@ impl Repository {
         let repo = &self.repository;
         let head = repo.head().context("Failed to read HEAD reference")?;
         Ok(head.target().unwrap())
-    }
-
-    /// Commits the specified files with the specified commit message and pushes
-    /// the commit to the `master` branch on the `origin` remote.
-    ///
-    /// Note that `modified_files` expects file paths **relative** to the
-    /// repository working folder!
-    #[instrument(skip_all, fields(message = %msg, num_files = modified_files.len()))]
-    fn perform_commit_and_push(&self, msg: &str, modified_files: &[&Path]) -> anyhow::Result<()> {
-        let mut index = self.repository.index()?;
-
-        for modified_file in modified_files {
-            if self.checkout_path.path().join(modified_file).exists() {
-                index.add_path(modified_file)?;
-            } else {
-                index.remove_path(modified_file)?;
-            }
-        }
-
-        index.write()?;
-        let tree_id = index.write_tree()?;
-        let tree = self.repository.find_tree(tree_id)?;
-
-        // git commit -m "..."
-        let head = self.head_oid()?;
-        let parent = self.repository.find_commit(head)?;
-        let sig = self.repository.signature()?;
-        self.repository
-            .commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&parent])?;
-
-        self.push()
     }
 
     /// Gets a list of files that have been modified since a given `starting_commit`
@@ -253,38 +297,8 @@ impl Repository {
         Ok(files)
     }
 
-    /// Push the current branch to the provided refname
-    #[instrument(skip_all)]
-    fn push(&self) -> anyhow::Result<()> {
-        self.run_command(Command::new("git").args(["push", "origin", "HEAD:master"]))
-    }
-
-    /// Commits the specified files with the specified commit message and pushes
-    /// the commit to the `master` branch on the `origin` remote.
-    ///
-    /// Note that `modified_files` expects **absolute** file paths!
-    ///
-    /// This function also prints the commit message and a success or failure
-    /// message to the console.
-    pub fn commit_and_push(&self, message: &str, modified_files: &[&Path]) -> anyhow::Result<()> {
-        info!("Committing and pushing \"{message}\"");
-
-        let checkout_path = self.checkout_path.path();
-        let relative_paths: Vec<&Path> = modified_files
-            .iter()
-            .map(|p| p.strip_prefix(checkout_path))
-            .collect::<Result<_, _>>()?;
-
-        self.perform_commit_and_push(message, &relative_paths)
-            .map(|_| info!("Commit and push finished for \"{message}\""))
-            .map_err(|err| {
-                error!(?err, "Commit and push for \"{message}\" errored");
-                err
-            })
-    }
-
-    /// Fetches any changes from the `origin` remote and performs a hard reset
-    /// to the tip of the `origin/master` branch.
+    /// Fetches any changes from the `origin` remote and force-updates the
+    /// local `refs/heads/master` ref to the fetched tip.
     #[instrument(skip_all)]
     pub fn reset_head(&self) -> anyhow::Result<()> {
         let original_head = self.head_oid()?;
@@ -293,36 +307,38 @@ impl Repository {
         self.run_command(Command::new("git").args(["fetch", "origin", "master"]))?;
         info!(duration = fetch_start.elapsed().as_nanos(), "Index fetched");
 
-        let reset_start = Instant::now();
-        self.run_command(Command::new("git").args(["reset", "--hard", "origin/master"]))?;
-        info!(duration = reset_start.elapsed().as_nanos(), "Index reset");
+        let fetch_head = self
+            .repository
+            .refname_to_id("FETCH_HEAD")
+            .context("Failed to resolve FETCH_HEAD")?;
+        self.repository
+            .reference("refs/heads/master", fetch_head, true, "reset_head")
+            .context("Failed to update refs/heads/master")?;
 
         let head = self.head_oid()?;
         if head != original_head {
-            // Ensure that the internal state of `self.repository` is updated correctly
-            self.repository.checkout_head(None)?;
-
             info!("Index reset from {original_head} to {head}");
         }
 
         Ok(())
     }
 
-    /// Reset `HEAD` to a single commit with all the index contents, but no parent
+    /// Rewrite the `master` branch to a single parentless commit wrapping the
+    /// current HEAD tree.
+    ///
+    /// The tree is reused by OID, so no blobs are read and no files are
+    /// touched. This stays cheap regardless of index size.
     #[instrument(skip_all)]
     pub fn squash_to_single_commit(&self, msg: &str) -> anyhow::Result<()> {
-        let tree = self.repository.find_commit(self.head_oid()?)?.tree()?;
-        let sig = self.repository.signature()?;
+        let repo = &self.repository;
+        let tree = repo.find_commit(self.head_oid()?)?.tree()?;
+        let sig = repo.signature()?;
 
-        // We cannot update an existing `update_ref`, because that requires the
-        // first parent of this commit to match the ref's current value.
-        // Instead, create the commit and then do a hard reset.
-        let commit = self.repository.commit(None, &sig, &sig, msg, &tree, &[])?;
-        let commit = self
-            .repository
-            .find_object(commit, Some(git2::ObjectType::Commit))?;
-        self.repository
-            .reset(&commit, git2::ResetType::Hard, None)?;
+        // `repo.commit(Some("HEAD"), ...)` would reject a parentless commit
+        // when HEAD is not itself parentless. Create the commit detached,
+        // then force-update `refs/heads/master` to point at it.
+        let commit = repo.commit(None, &sig, &sig, msg, &tree, &[])?;
+        repo.reference("refs/heads/master", commit, true, msg)?;
 
         Ok(())
     }
@@ -371,4 +387,99 @@ pub fn run_via_cli(command: &mut Command, credentials: &Credentials) -> anyhow::
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::UpstreamIndex;
+    use claims::{assert_err, assert_none, assert_ok_eq, assert_some_eq};
+
+    fn setup() -> (UpstreamIndex, Repository) {
+        let upstream = UpstreamIndex::new().unwrap();
+        let config = RepositoryConfig {
+            index_location: upstream.url(),
+            credentials: Credentials::Missing,
+        };
+        let repo = Repository::open(&config).unwrap();
+        (upstream, repo)
+    }
+
+    #[test]
+    fn read_entry_missing() {
+        let (_upstream, repo) = setup();
+        assert_ok_eq!(repo.read_entry("serde"), None::<Vec<u8>>);
+    }
+
+    #[test]
+    fn read_entry_present() {
+        let (upstream, repo) = setup();
+        upstream.write_file("se/rd/serde", "hello\n").unwrap();
+        repo.reset_head().unwrap();
+
+        let entry = repo.read_entry("serde").unwrap();
+        assert_some_eq!(entry, b"hello\n".to_vec());
+    }
+
+    #[test]
+    fn read_entry_error_mentions_name() {
+        let (_upstream, repo) = setup();
+
+        // A null byte in the crate name forces `git2` to fail the path
+        // conversion with a non-`NotFound` error, exercising the error
+        // context branch of `read_entry()`.
+        let err = assert_err!(repo.read_entry("\0serde"));
+        insta::assert_snapshot!(err, @"Failed to look up tree entry for `\0serde`");
+    }
+
+    #[test]
+    fn read_entry_ignores_top_level_files() {
+        let (upstream, repo) = setup();
+        upstream.write_file("config.json", "{}").unwrap();
+        repo.reset_head().unwrap();
+
+        assert_none!(repo.read_entry("config.json").unwrap());
+    }
+
+    #[test]
+    fn list_entries_empty() {
+        let (_upstream, repo) = setup();
+        assert_ok_eq!(repo.list_entries(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn list_entries_returns_crate_names() {
+        let (upstream, repo) = setup();
+        upstream.write_file("1/a", "").unwrap();
+        upstream.write_file("2/ab", "").unwrap();
+        upstream.write_file("3/a/abc", "").unwrap();
+        upstream.write_file("se/rd/serde", "").unwrap();
+        repo.reset_head().unwrap();
+
+        let mut entries = repo.list_entries().unwrap();
+        entries.sort();
+        assert_eq!(entries, vec!["a", "ab", "abc", "serde"]);
+    }
+
+    #[test]
+    fn list_entries_excludes_top_level_files() {
+        let (upstream, repo) = setup();
+        upstream.write_file("config.json", "{}").unwrap();
+        upstream.write_file("se/rd/serde", "").unwrap();
+        repo.reset_head().unwrap();
+
+        assert_ok_eq!(repo.list_entries(), vec!["serde".to_string()]);
+    }
+
+    #[test]
+    fn list_entries_excludes_github_folder() {
+        let (upstream, repo) = setup();
+        upstream
+            .write_file(".github/workflows/ci.yml", "name: CI\n")
+            .unwrap();
+        upstream.write_file("se/rd/serde", "").unwrap();
+        repo.reset_head().unwrap();
+
+        assert_ok_eq!(repo.list_entries(), vec!["serde".to_string()]);
+    }
 }

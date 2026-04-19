@@ -7,10 +7,6 @@ use crates_io_database::models::{CloudFrontDistribution, CloudFrontInvalidationQ
 use crates_io_index::Repository;
 use crates_io_worker::BackgroundJob;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::fs::File;
-use std::io::{ErrorKind, Write};
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::runtime::Handle;
@@ -50,31 +46,27 @@ impl BackgroundJob for SyncToGitIndex {
 
         spawn_blocking(move || {
             let repo = env.lock_index()?;
-            let dst = repo.index_file(&crate_name);
-
-            // Read the previous crate contents
-            let old = match fs::read_to_string(&dst) {
-                Ok(content) => Some(content),
-                Err(error) if error.kind() == ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
+            let old = repo.read_entry(&crate_name)?;
 
             let commit_and_push_start = Instant::now();
             match (old, new) {
                 (None, Some(new)) => {
-                    fs::create_dir_all(dst.parent().unwrap())?;
-                    let mut file = File::create(&dst)?;
-                    file.write_all(new.as_bytes())?;
-                    repo.commit_and_push(&format!("Create crate `{}`", &crate_name), &[&dst])?;
+                    let msg = format!("Create crate `{crate_name}`");
+                    let mut builder = repo.commit_builder(msg)?;
+                    builder.upsert_entry(&crate_name, new.as_bytes())?;
+                    builder.commit_and_push()?;
                 }
-                (Some(old), Some(new)) if old != new => {
-                    let mut file = File::create(&dst)?;
-                    file.write_all(new.as_bytes())?;
-                    repo.commit_and_push(&format!("Update crate `{}`", &crate_name), &[&dst])?;
+                (Some(old), Some(new)) if old != new.as_bytes() => {
+                    let msg = format!("Update crate `{crate_name}`");
+                    let mut builder = repo.commit_builder(msg)?;
+                    builder.upsert_entry(&crate_name, new.as_bytes())?;
+                    builder.commit_and_push()?;
                 }
                 (Some(_old), None) => {
-                    fs::remove_file(&dst)?;
-                    repo.commit_and_push(&format!("Delete crate `{}`", &crate_name), &[&dst])?;
+                    let msg = format!("Delete crate `{crate_name}`");
+                    let mut builder = repo.commit_builder(msg)?;
+                    builder.remove_entry(&crate_name)?;
+                    builder.commit_and_push()?;
                 }
                 _ => debug!("Skipping sync because index is up-to-date"),
             }
@@ -123,7 +115,8 @@ impl BackgroundJob for BulkSyncToGitIndex {
             let repo = env.lock_index()?;
             let include_pubtime = env.config.index_include_pubtime;
 
-            let mut modified_files = Vec::new();
+            let mut builder = repo.commit_builder(commit_message)?;
+            let mut num_changes = 0;
 
             for crate_name in &crate_names {
                 // Fetch index data using async database queries
@@ -134,42 +127,32 @@ impl BackgroundJob for BulkSyncToGitIndex {
                     })
                     .with_context(|| format!("Failed to get index data for `{crate_name}`"))?;
 
-                let dst = repo.index_file(crate_name);
-
-                let old = match fs::read_to_string(&dst) {
-                    Ok(content) => Some(content),
-                    Err(error) if error.kind() == ErrorKind::NotFound => None,
-                    Err(error) => return Err(error.into()),
-                };
+                let old = repo.read_entry(crate_name)?;
 
                 match (old, new) {
                     (None, Some(new)) => {
-                        fs::create_dir_all(dst.parent().unwrap())?;
-                        let mut file = File::create(&dst)?;
-                        file.write_all(new.as_bytes())?;
-                        modified_files.push(dst);
+                        builder.upsert_entry(crate_name, new.as_bytes())?;
+                        num_changes += 1;
                     }
-                    (Some(old), Some(new)) if old != new => {
-                        let mut file = File::create(&dst)?;
-                        file.write_all(new.as_bytes())?;
-                        modified_files.push(dst);
+                    (Some(old), Some(new)) if old != new.as_bytes() => {
+                        builder.upsert_entry(crate_name, new.as_bytes())?;
+                        num_changes += 1;
                     }
                     (Some(_old), None) => {
-                        fs::remove_file(&dst)?;
-                        modified_files.push(dst);
+                        builder.remove_entry(crate_name)?;
+                        num_changes += 1;
                     }
                     _ => debug!(%crate_name, "Skipping sync because index is up-to-date"),
                 }
             }
 
-            if modified_files.is_empty() {
+            if num_changes == 0 {
                 info!("No changes to commit");
                 return Ok(());
             }
 
-            info!("Committing {} modified files", modified_files.len());
-            let modified_refs: Vec<&Path> = modified_files.iter().map(|p| p.as_path()).collect();
-            repo.commit_and_push(&commit_message, &modified_refs)?;
+            info!("Committing {num_changes} modified files");
+            builder.commit_and_push()?;
 
             Ok(())
         })
