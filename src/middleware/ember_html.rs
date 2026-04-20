@@ -23,6 +23,10 @@ use crate::app::AppState;
 
 const OG_IMAGE_FALLBACK_URL: &str = "https://crates.io/assets/og-image.png";
 const PATH_PREFIX_CRATES: &str = "/crates/";
+/// Temporary: until the Svelte app replaces the Ember app at `/`, it is
+/// served at `/svelte/`. This constant can be removed once the migration is
+/// complete.
+const PATH_PREFIX_SVELTE_CRATES: &str = "/svelte/crates/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FrontendApp {
@@ -151,11 +155,14 @@ pub async fn serve_html(state: AppState, request: Request, next: Next) -> Respon
     }
 }
 
-/// Extract the crate name from the path, by stripping [`PATH_PREFIX_CRATES`]
-/// prefix, and returning the firsts path segment from the result.
-/// Returns `None` if the path was not prefixed with [`PATH_PREFIX_CRATES`].
+/// Extract the crate name from the path by stripping the
+/// [`PATH_PREFIX_CRATES`] (or [`PATH_PREFIX_SVELTE_CRATES`]) prefix and
+/// returning the first path segment from the result. Returns `None` if the
+/// path was not prefixed with either.
 fn extract_crate_name(path: &str) -> Option<&str> {
-    let suffix = path.strip_prefix(PATH_PREFIX_CRATES)?;
+    let suffix = path
+        .strip_prefix(PATH_PREFIX_CRATES)
+        .or_else(|| path.strip_prefix(PATH_PREFIX_SVELTE_CRATES))?;
     let len = suffix.find('/').unwrap_or(suffix.len());
     let krate = &suffix[..len];
     krate.is_empty().not().then_some(krate)
@@ -191,6 +198,16 @@ mod tests {
             ("/crates/", None),
             ("/dashboard/", None),
             ("/settings/profile", None),
+            // Temporary: until the Svelte app replaces the Ember app at `/`,
+            // it is served at `/svelte/`. These rows can be removed once the
+            // migration is complete.
+            ("/svelte/crates/tokio", Some("tokio")),
+            ("/svelte/crates/tokio/versions", Some("tokio")),
+            ("/svelte/crates/tokio/", Some("tokio")),
+            ("/svelte/", None),
+            ("/svelte/dashboard/", None),
+            ("/svelte/crates", None),
+            ("/svelte/crates/", None),
         ];
 
         for (path, expected) in PATHS.iter().copied() {
@@ -212,6 +229,19 @@ mod tests {
             ("/crates/", None),
             ("/dashboard/", None),
             ("/settings/profile", None),
+            // Temporary: until the Svelte app replaces the Ember app at `/`,
+            // it is served at `/svelte/`. These rows can be removed once the
+            // migration is complete.
+            (
+                "/svelte/crates/tokio",
+                Some("http://localhost:3000/og/tokio.png"),
+            ),
+            (
+                "/svelte/crates/tokio/versions",
+                Some("http://localhost:3000/og/tokio.png"),
+            ),
+            ("/svelte/", None),
+            ("/svelte/dashboard/", None),
         ];
 
         let og_image_base_url: Url = "http://localhost:3000/og/".parse().unwrap();
