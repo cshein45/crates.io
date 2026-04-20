@@ -15,10 +15,6 @@
   let searchFormContext = getSearchFormContext();
   let inputElement: HTMLInputElement | undefined = $state();
 
-  function updateSearchValue(event: Event) {
-    searchFormContext.value = (event.target as HTMLInputElement).value;
-  }
-
   function search(event: SubmitEvent) {
     event.preventDefault();
     // eslint-disable-next-line svelte/no-navigation-without-resolve -- resolve() doesn't support query params
@@ -67,8 +63,7 @@
     id="cargo-desktop-search"
     placeholder="Type 'S' or '/' to search"
     autocorrect="off"
-    value={searchFormContext.value}
-    oninput={updateSearchValue}
+    bind:value={searchFormContext.value}
     {autofocus}
     required
     aria-label="Search"
@@ -83,8 +78,7 @@
     name="q"
     placeholder="Search"
     autocorrect="off"
-    value={searchFormContext.value}
-    oninput={updateSearchValue}
+    bind:value={searchFormContext.value}
     required
     aria-label="Search"
   />
