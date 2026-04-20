@@ -59,33 +59,60 @@ test.describe('Acceptance | search', { tag: '@acceptance' }, () => {
     await expect(page.locator('[data-test-search-input]')).toHaveValue('');
   });
 
-  test('pressing S key to focus the search bar', async ({ page, msw }) => {
-    await loadFixtures(msw.db);
+  test.describe('search input focus behavior', () => {
+    test('pressing S key focuses the search input', async ({ page, msw }) => {
+      await loadFixtures(msw.db);
 
-    await page.goto('/');
+      await page.goto('/');
 
-    const searchInput = page.locator('[data-test-search-input]');
-    await searchInput.blur();
-    await page.keyboard.press('a');
-    await expect(searchInput).not.toBeFocused();
+      const searchInput = page.locator('[data-test-search-input]');
+      await searchInput.blur();
+      await page.keyboard.press('a');
+      await expect(searchInput).not.toBeFocused();
 
-    await searchInput.blur();
-    await page.keyboard.press('s');
-    await expect(page.locator('[data-test-search-input]')).toBeFocused();
+      await searchInput.blur();
+      await page.keyboard.press('s');
+      await expect(page.locator('[data-test-search-input]')).toBeFocused();
 
-    await searchInput.blur();
-    await page.keyboard.press('s');
-    await expect(page.locator('[data-test-search-input]')).toBeFocused();
+      await searchInput.blur();
+      await page.keyboard.press('s');
+      await expect(page.locator('[data-test-search-input]')).toBeFocused();
 
-    await searchInput.blur();
-    await page.keyboard.press('S');
-    await expect(page.locator('[data-test-search-input]')).toBeFocused();
+      await searchInput.blur();
+      await page.keyboard.press('S');
+      await expect(page.locator('[data-test-search-input]')).toBeFocused();
 
-    await searchInput.blur();
-    await page.keyboard.down('Shift');
-    await page.keyboard.press('s');
-    await page.keyboard.up('Shift');
-    await expect(page.locator('[data-test-search-input]')).toBeFocused();
+      await searchInput.blur();
+      await page.keyboard.down('Shift');
+      await page.keyboard.press('s');
+      await page.keyboard.up('Shift');
+      await expect(page.locator('[data-test-search-input]')).toBeFocused();
+    });
+
+    test('search input stays focused after submitting the search form with Enter', async ({ page, msw }) => {
+      await loadFixtures(msw.db);
+
+      await page.goto('/');
+      await expect(page.locator('[data-test-search-input]')).toBeFocused();
+
+      await page.keyboard.type('rust');
+      await page.keyboard.press('Enter');
+
+      await expect(page).toHaveURL('/search?q=rust');
+      await expect(page.locator('[data-test-search-input]')).toBeFocused();
+    });
+
+    test('focus is not stolen when navigating from the front page', async ({ page, msw }) => {
+      let crate = await msw.db.crate.create({ name: 'nanomsg' });
+      await msw.db.version.create({ crate, num: '0.6.1' });
+
+      await page.goto('/');
+      await expect(page.locator('[data-test-search-input]')).toBeFocused();
+
+      await page.click('[data-test-just-updated] [data-test-crate-link="0"]');
+      await expect(page).toHaveURL('/crates/nanomsg/0.6.1');
+      await expect(page.locator('[data-test-search-input]')).not.toBeFocused();
+    });
   });
 
   test('check search results are by default displayed by relevance', async ({ page, msw }) => {
