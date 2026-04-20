@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
   import { resolve } from '$app/paths';
 
   import SearchIcon from '$lib/assets/search.svg?component';
@@ -15,10 +15,23 @@
   let searchFormContext = getSearchFormContext();
   let inputElement: HTMLInputElement | undefined = $state();
 
+  // Focus the input imperatively instead of using the `autofocus` attribute.
+  // Svelte only sets the attribute on mount and never removes it, and
+  // SvelteKit's `reset_focus()` refocuses any `[autofocus]` element after
+  // each client-side navigation, which would steal focus back to the
+  // search bar on every nav once the attribute has been set.
+  let hasAutoFocused = false;
+  afterNavigate(() => {
+    if (autofocus && !hasAutoFocused) {
+      hasAutoFocused = true;
+      inputElement?.focus();
+    }
+  });
+
   function search(event: SubmitEvent) {
     event.preventDefault();
     // eslint-disable-next-line svelte/no-navigation-without-resolve -- resolve() doesn't support query params
-    goto(`${resolve('/search')}?q=${encodeURIComponent(searchFormContext.value)}`);
+    goto(`${resolve('/search')}?q=${encodeURIComponent(searchFormContext.value)}`, { keepFocus: true });
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -40,7 +53,6 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<!-- svelte-ignore a11y_autofocus -->
 <form
   action="/search"
   role="search"
@@ -51,7 +63,6 @@
   class="form"
   class:size-big={size === 'big'}
   onsubmit={search}
-  data-sveltekit-keepfocus
 >
   <!-- Large screen input with keyboard shortcut hint -->
   <input
@@ -64,7 +75,6 @@
     placeholder="Type 'S' or '/' to search"
     autocorrect="off"
     bind:value={searchFormContext.value}
-    {autofocus}
     required
     aria-label="Search"
     data-test-search-input
