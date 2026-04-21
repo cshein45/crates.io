@@ -33,14 +33,15 @@ def download_version(crate, version):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Download all versions of a crate.")
-    parser.add_argument("crate", help="Name of the crate")
+    parser = argparse.ArgumentParser(description="Download all versions of one or more crates.")
+    parser.add_argument("crates", nargs="+", metavar="CRATE", help="Name of a crate")
     args = parser.parse_args()
 
-    versions = list_versions(args.crate)
-    print(f"found {len(versions)} versions of {args.crate}")
-    for version in versions:
-        download_version(args.crate, version)
+    for crate in args.crates:
+        versions = list_versions(crate)
+        print(f"found {len(versions)} versions of {crate}")
+        for version in versions:
+            download_version(crate, version)
 
 
 if __name__ == "__main__":
