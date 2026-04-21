@@ -1,12 +1,13 @@
 use crate::tasks::spawn_blocking;
 use crate::worker::Environment;
+use crate::worker::jobs::ArchiveIndexBranch;
 use chrono::Utc;
 use crates_io_worker::BackgroundJob;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 #[derive(Serialize, Deserialize)]
 pub struct SquashIndex;
@@ -23,8 +24,9 @@ impl BackgroundJob for SquashIndex {
     async fn run(&self, env: Self::Context) -> anyhow::Result<()> {
         info!("Squashing the index into a single commit");
 
-        spawn_blocking(move || {
-            let repo = env.lock_index()?;
+        let env_for_blocking = env.clone();
+        let snapshot_branch = spawn_blocking(move || {
+            let repo = env_for_blocking.lock_index()?;
 
             let now = Utc::now().format("%F");
             let snapshot_branch = format!("snapshot-{now}");
@@ -67,24 +69,21 @@ impl BackgroundJob for SquashIndex {
                 "Squashed index pushed to origin",
             );
 
-            if let Some(archive_url) = env.config.index_archive_url.as_ref() {
-                info!(%archive_url, "Pushing snapshot to archive repository");
-                let archive_start = Instant::now();
-                repo.run_command(Command::new("git").args([
-                    "push",
-                    archive_url.as_str(),
-                    &format!("{original_head}:{snapshot_branch}"),
-                ]))?;
-                info!(
-                    duration = archive_start.elapsed().as_nanos(),
-                    "Snapshot pushed to archive repository",
-                );
-            }
-
             info!("The index has been successfully squashed.");
-
-            Ok(())
+            Ok::<_, anyhow::Error>(snapshot_branch)
         })
-        .await?
+        .await??;
+
+        if let Err(error) = enqueue_archive_job(&env, &snapshot_branch).await {
+            warn!("Failed to enqueue `ArchiveIndexBranch` job for `{snapshot_branch}`: {error}");
+        }
+
+        Ok(())
     }
+}
+
+async fn enqueue_archive_job(env: &Environment, branch: &str) -> anyhow::Result<()> {
+    let conn = env.deadpool.get().await?;
+    ArchiveIndexBranch::new(branch).enqueue(&conn).await?;
+    Ok(())
 }
