@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use git2::build::TreeUpdateBuilder;
-use git2::{ErrorCode, FileMode, Repository, Sort};
+use git2::{ErrorCode, FileMode, Oid, Repository, Sort};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread;
@@ -164,6 +164,14 @@ impl UpstreamIndex {
         repo.commit(Some("HEAD"), &sig, &sig, &message, &new_tree, &[&parent])?;
 
         Ok(())
+    }
+
+    /// Resolve the given branch to the commit it points at.
+    pub fn branch_oid(&self, branch: &str) -> anyhow::Result<Oid> {
+        let repo = self.repository.lock().unwrap();
+        let ref_name = format!("refs/heads/{branch}");
+        let reference = repo.find_reference(&ref_name)?;
+        Ok(reference.peel_to_commit()?.id())
     }
 }
 
