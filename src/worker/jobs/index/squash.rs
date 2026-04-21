@@ -29,11 +29,13 @@ impl BackgroundJob for SquashIndex {
             let repo = env.lock_index()?;
 
             let now = Utc::now().format("%F");
+            let snapshot_branch = format!("snapshot-{now}");
+
             let original_head = repo.head_oid()?;
             info!("Read original HEAD: {original_head}");
 
             let msg = format!("Collapse index into one commit\n\n\
-            Previous HEAD was {original_head}, now on the `snapshot-{now}` branch\n\n\
+            Previous HEAD was {original_head}, now on the `{snapshot_branch}` branch\n\n\
             More information about this change can be found [online] and on [this issue].\n\n\
             [online]: https://internals.rust-lang.org/t/cargos-crate-index-upcoming-squash-into-one-commit/8440\n\
             [this issue]: https://github.com/rust-lang/crates-io-cargo-teams/issues/47");
@@ -60,7 +62,7 @@ impl BackgroundJob for SquashIndex {
                 // The new squashed commit is pushed to master
                 "HEAD:refs/heads/master",
                 // The previous value of HEAD is pushed to a snapshot branch
-                &format!("{original_head}:refs/heads/snapshot-{now}"),
+                &format!("{original_head}:refs/heads/{snapshot_branch}"),
             ]))?;
             info!(
                 duration = push_start.elapsed().as_nanos(),
@@ -73,7 +75,7 @@ impl BackgroundJob for SquashIndex {
                 repo.run_command(Command::new("git").args([
                     "push",
                     archive_url.as_str(),
-                    &format!("{original_head}:snapshot-{now}"),
+                    &format!("{original_head}:{snapshot_branch}"),
                 ]))?;
                 info!(
                     duration = archive_start.elapsed().as_nanos(),
