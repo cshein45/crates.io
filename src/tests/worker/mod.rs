@@ -1,3 +1,4 @@
+mod archive_index_branch;
 mod generate_og_image;
 mod git;
 mod normalize_index;
