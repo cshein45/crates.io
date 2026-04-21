@@ -15,6 +15,12 @@ use diesel_async::RunQueryDsl;
     rename_all = "snake_case"
 )]
 pub enum Command {
+    /// Archive the given snapshot branch to the configured archive repository
+    /// (`GIT_ARCHIVE_REPO_URL`). No-op if the archive URL is not configured.
+    ArchiveIndexBranch {
+        /// Name of the snapshot branch to archive (e.g. `snapshot-2026-04-21`)
+        branch: String,
+    },
     ArchiveVersionDownloads {
         #[arg(long)]
         /// The date before which to archive version downloads (default: 90 days ago)
@@ -57,6 +63,9 @@ pub async fn run(command: Command) -> Result<()> {
     println!("Enqueueing background job: {command:?}");
 
     match command {
+        Command::ArchiveIndexBranch { branch } => {
+            jobs::ArchiveIndexBranch::new(branch).enqueue(&conn).await?;
+        }
         Command::ArchiveVersionDownloads { before } => {
             before
                 .map(jobs::ArchiveVersionDownloads::before)
