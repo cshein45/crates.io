@@ -1,14 +1,12 @@
 use crate::tasks::spawn_blocking;
 use crate::worker::Environment;
 use chrono::Utc;
-use crates_io_env_vars::var_parsed;
 use crates_io_worker::BackgroundJob;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{info, instrument};
-use url::Url;
 
 #[derive(Serialize, Deserialize)]
 pub struct SquashIndex;
@@ -69,7 +67,7 @@ impl BackgroundJob for SquashIndex {
                 "Squashed index pushed to origin",
             );
 
-            if let Some(archive_url) = var_parsed::<Url>("GIT_ARCHIVE_REPO_URL")? {
+            if let Some(archive_url) = env.config.index_archive_url.as_ref() {
                 info!(%archive_url, "Pushing snapshot to archive repository");
                 let archive_start = Instant::now();
                 repo.run_command(Command::new("git").args([

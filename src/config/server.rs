@@ -102,6 +102,11 @@ pub struct Server {
 
     /// Enable Fastly CDN invalidation for sparse index files.
     pub sparse_index_fastly_enabled: bool,
+
+    /// URL of a git repository to mirror the crate index's snapshot branches
+    /// to. When set, the `ArchiveIndexBranch` background job pushes snapshot
+    /// branches to this remote; when unset the job is a no-op.
+    pub index_archive_url: Option<Url>,
 }
 
 impl Server {
@@ -133,6 +138,8 @@ impl Server {
     ///   by an operator (e.g. `/crates/{crate_id}/{version}/download`).
     /// - `DISABLE_TOKEN_CREATION`: If set to any non-empty value, disables API token creation
     ///   and uses the value as the error message returned to users.
+    /// - `GIT_ARCHIVE_REPO_URL`: URL of a git repository to mirror the crate index's snapshot
+    ///   branches to. If unset the `ArchiveIndexBranch` background job is a no-op.
     ///
     /// # Panics
     ///
@@ -255,6 +262,7 @@ impl Server {
             index_include_pubtime,
             sparse_index_fastly_enabled: var_parsed("SPARSE_INDEX_FASTLY_ENABLED")?
                 .unwrap_or(false),
+            index_archive_url: var_parsed("GIT_ARCHIVE_REPO_URL")?,
         })
     }
 }
