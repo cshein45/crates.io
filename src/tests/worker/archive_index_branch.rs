@@ -57,6 +57,33 @@ async fn archive_index_branch_without_url_configured() {
     app.run_pending_background_jobs().await;
 }
 
+/// With an archive URL configured but no GitHub App wired into the
+/// environment, the job should fail loudly rather than push without
+/// authentication.
+#[tokio::test(flavor = "multi_thread")]
+async fn archive_index_branch_without_github_app() {
+    let archive = UpstreamIndex::new().unwrap();
+    let archive_url = archive.url();
+
+    let (app, _) = TestApp::full()
+        .with_config(|c| c.index_archive_url = Some(archive_url))
+        .with_github_app(None)
+        .empty()
+        .await;
+
+    let mut conn = app.db_conn().await;
+    seed_snapshot_branch(app.upstream_index());
+
+    let job = jobs::ArchiveIndexBranch::new(SNAPSHOT_BRANCH);
+    assert_ok!(job.enqueue(&conn).await);
+    assert_snapshot!(app.try_run_pending_background_jobs().await.unwrap_err(), @"1 jobs failed");
+
+    diesel::delete(background_jobs::table)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+}
+
 /// If the requested branch does not exist on origin, the job should fail so
 /// that an operator typo or a stale enqueue produces loud feedback rather
 /// than a silent success.
