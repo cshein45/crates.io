@@ -15,6 +15,7 @@ use crates_io::worker::{Environment, RunnerExt};
 use crates_io::{App, Emails, Env};
 use crates_io_docs_rs::MockDocsRsClient;
 use crates_io_github::MockGitHubClient;
+use crates_io_github_app::MockGitHubApp;
 use crates_io_index::testing::UpstreamIndex;
 use crates_io_index::{Credentials, RepositoryConfig};
 use crates_io_og_image::OgImageGenerator;
@@ -100,12 +101,18 @@ impl TestApp {
     pub fn init() -> TestAppBuilder {
         crates_io::util::tracing::init_for_test();
 
+        let mut github_app = MockGitHubApp::new();
+        github_app
+            .expect_installation_token()
+            .returning(|| Ok(secrecy::SecretString::from("test-token")));
+
         TestAppBuilder {
             config: simple_config(),
             index: None,
             build_job_runner: false,
             use_chaos_proxy: false,
             team_repo: MockTeamRepo::new(),
+            github_app: Some(github_app),
             github: None,
             docs_rs: None,
             oidc_key_stores: Default::default(),
@@ -265,6 +272,7 @@ pub struct TestAppBuilder {
     build_job_runner: bool,
     use_chaos_proxy: bool,
     team_repo: MockTeamRepo,
+    github_app: Option<MockGitHubApp>,
     github: Option<MockGitHubClient>,
     docs_rs: Option<MockDocsRsClient>,
     oidc_key_stores: HashMap<String, Box<dyn OidcKeyStore>>,
@@ -328,6 +336,7 @@ impl TestAppBuilder {
                 .emails(app.emails.clone())
                 .maybe_docs_rs(self.docs_rs.map(|cl| Box::new(cl) as _))
                 .team_repo(Box::new(self.team_repo))
+                .maybe_github_app(self.github_app.map(|a| Arc::new(a) as _))
                 .maybe_og_image_generator(self.og_image_generator)
                 .build();
 
@@ -435,6 +444,11 @@ impl TestAppBuilder {
 
     pub fn with_team_repo(mut self, team_repo: MockTeamRepo) -> Self {
         self.team_repo = team_repo;
+        self
+    }
+
+    pub fn with_github_app(mut self, github_app: Option<MockGitHubApp>) -> Self {
+        self.github_app = github_app;
         self
     }
 

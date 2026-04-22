@@ -156,6 +156,7 @@ utoipa-axum = "=0.2.0"
 bytes = "=1.11.1"
 crates_io_docs_rs = { path = "crates/crates_io_docs_rs", features = ["mock"] }
 crates_io_github = { path = "crates/crates_io_github", features = ["mock"] }
+crates_io_github_app = { path = "crates/crates_io_github_app", features = ["mock"] }
 crates_io_index = { path = "crates/crates_io_index", features = ["testing"] }
 crates_io_tarball = { path = "crates/crates_io_tarball", features = ["builder"] }
 crates_io_team_repo = { path = "crates/crates_io_team_repo", features = ["mock"] }
