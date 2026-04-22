@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import json
 import sys
 import urllib.request
 from pathlib import Path
 
 USER_AGENT = "crate-backup (https://github.com/rust-lang/crates.io)"
+DOWNLOADS_CSV = "downloads.csv"
 
 
 def fetch(url):
@@ -17,7 +19,7 @@ def list_versions(crate):
     url = f"https://crates.io/api/v1/crates/{crate}/versions"
     with fetch(url) as resp:
         data = json.load(resp)
-    return [v["num"] for v in data["versions"]]
+    return [(v["num"], v["downloads"]) for v in data["versions"]]
 
 
 def download_version(crate, version):
@@ -37,11 +39,17 @@ def main():
     parser.add_argument("crates", nargs="+", metavar="CRATE", help="Name of a crate")
     args = parser.parse_args()
 
-    for crate in args.crates:
-        versions = list_versions(crate)
-        print(f"found {len(versions)} versions of {crate}")
-        for version in versions:
-            download_version(crate, version)
+    csv_path = Path.cwd() / DOWNLOADS_CSV
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["crate", "version", "downloads"])
+        for crate in args.crates:
+            versions = list_versions(crate)
+            print(f"found {len(versions)} versions of {crate}")
+            for version, downloads in versions:
+                writer.writerow([crate, version, downloads])
+                download_version(crate, version)
+    print(f"wrote download counts to {csv_path.name}")
 
 
 if __name__ == "__main__":
