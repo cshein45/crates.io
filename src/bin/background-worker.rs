@@ -13,7 +13,7 @@
 #[macro_use]
 extern crate tracing;
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use crates_io::app::create_database_pool;
 use crates_io::cloudfront::CloudFront;
 use crates_io::ssh;
@@ -21,8 +21,9 @@ use crates_io::storage::Storage;
 use crates_io::worker::{Environment, RunnerExt};
 use crates_io::{Emails, config};
 use crates_io_docs_rs::RealDocsRsClient;
-use crates_io_env_vars::var;
+use crates_io_env_vars::{required_var, var};
 use crates_io_fastly::Fastly;
+use crates_io_github_app::{GitHubApp, GitHubAppClient};
 use crates_io_index::RepositoryConfig;
 use crates_io_og_image::OgImageGenerator;
 use crates_io_team_repo::TeamRepoImpl;
@@ -31,6 +32,7 @@ use object_store::prefix::PrefixStore;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
+use url::Url;
 
 fn main() -> anyhow::Result<()> {
     let _sentry = crates_io::sentry::init();
@@ -87,6 +89,8 @@ fn main() -> anyhow::Result<()> {
 
     let docs_rs = RealDocsRsClient::from_environment().map(|cl| Box::new(cl) as _);
 
+    let github_app = build_github_app(config.index_archive_url.as_ref())?;
+
     let deadpool = create_database_pool(&config.db.primary);
 
     let environment = Environment::builder()
@@ -100,6 +104,7 @@ fn main() -> anyhow::Result<()> {
         .emails(emails)
         .maybe_docs_rs(docs_rs)
         .team_repo(Box::new(team_repo))
+        .maybe_github_app(github_app)
         .og_image_generator(OgImageGenerator::from_environment()?)
         .build();
 
@@ -129,4 +134,29 @@ fn main() -> anyhow::Result<()> {
     });
 
     Ok(())
+}
+
+/// Builds the GitHub App client used to authenticate the archive index
+/// push. Returns `None` when `GIT_ARCHIVE_REPO_URL` is unset, in which
+/// case no archive push happens and no credentials are needed.
+///
+/// When the archive URL *is* set, both `GH_INDEX_SYNC_APP_CLIENT_ID`
+/// and `GH_INDEX_SYNC_APP_PRIVATE_KEY` must also be present, and the
+/// archive URL must include an `<org>` path segment.
+fn build_github_app(archive_url: Option<&Url>) -> anyhow::Result<Option<Arc<dyn GitHubApp>>> {
+    let Some(archive_url) = archive_url else {
+        return Ok(None);
+    };
+
+    let org = archive_url
+        .path_segments()
+        .and_then(|mut segments| segments.next())
+        .filter(|segment| !segment.is_empty())
+        .ok_or_else(|| anyhow!("GIT_ARCHIVE_REPO_URL is missing the org path segment"))?;
+
+    let client_id = required_var("GH_INDEX_SYNC_APP_CLIENT_ID")?;
+    let pem = required_var("GH_INDEX_SYNC_APP_PRIVATE_KEY")?;
+
+    let client = GitHubAppClient::new(&client_id, &pem, org)?;
+    Ok(Some(Arc::new(client)))
 }

@@ -1430,6 +1430,7 @@ dependencies = [
  "crates_io_env_vars",
  "crates_io_fastly",
  "crates_io_github",
+ "crates_io_github_app",
  "crates_io_index",
  "crates_io_linecount",
  "crates_io_markdown",
