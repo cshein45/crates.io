@@ -354,6 +354,47 @@ impl Repository {
 
         run_via_cli(command, &self.credentials)
     }
+
+    /// Registers a git remote under the given `name` pointing at `url` and
+    /// returns a [`TemporaryRemote`] guard that removes it on drop.
+    ///
+    /// Any pre-existing remote with the same name is removed first.
+    pub fn add_temporary_remote<'a>(
+        &'a self,
+        name: &str,
+        url: &Url,
+    ) -> anyhow::Result<TemporaryRemote<'a>> {
+        let name = name.to_string();
+
+        let _ = self.remove_remote(&name);
+        self.add_remote(&name, url)?;
+        Ok(TemporaryRemote { repo: self, name })
+    }
+
+    fn add_remote(&self, name: &str, url: &Url) -> anyhow::Result<()> {
+        self.repository.remote(name, url.as_str())?;
+        Ok(())
+    }
+
+    fn remove_remote(&self, name: &str) -> anyhow::Result<()> {
+        self.repository.remote_delete(name)?;
+        Ok(())
+    }
+}
+
+/// RAII guard returned by [`Repository::add_temporary_remote`]. Removes the
+/// associated remote from the repository when dropped.
+pub struct TemporaryRemote<'a> {
+    repo: &'a Repository,
+    name: String,
+}
+
+impl Drop for TemporaryRemote<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = self.repo.remove_remote(&self.name) {
+            error!("Failed to remove `{}` remote: {error}", self.name);
+        }
+    }
 }
 
 /// Runs the specified `git` command through the `git` CLI.
@@ -403,6 +444,17 @@ mod tests {
         };
         let repo = Repository::open(&config).unwrap();
         (upstream, repo)
+    }
+
+    fn added_remotes(repo: &Repository) -> Vec<String> {
+        repo.git_repo()
+            .remotes()
+            .unwrap()
+            .iter()
+            .flatten()
+            .filter(|name| *name != "origin")
+            .map(str::to_string)
+            .collect()
     }
 
     #[test]
@@ -481,5 +533,32 @@ mod tests {
         repo.reset_head().unwrap();
 
         assert_ok_eq!(repo.list_entries(), vec!["serde".to_string()]);
+    }
+
+    #[test]
+    fn temporary_remote_is_removed_on_drop() {
+        let (upstream, repo) = setup();
+        let url = upstream.url();
+
+        let guard = repo.add_temporary_remote("archive", &url).unwrap();
+        assert_eq!(added_remotes(&repo), vec!["archive".to_string()]);
+
+        drop(guard);
+        assert_eq!(added_remotes(&repo), Vec::<String>::new());
+    }
+
+    #[test]
+    fn temporary_remote_replaces_pre_existing_remote() {
+        let (upstream, repo) = setup();
+        let old_url = Url::parse("https://example.invalid/old.git").unwrap();
+        let new_url = upstream.url();
+
+        repo.add_remote("archive", &old_url).unwrap();
+
+        let _guard = repo.add_temporary_remote("archive", &new_url).unwrap();
+        assert_eq!(added_remotes(&repo), vec!["archive".to_string()]);
+
+        let remote = repo.git_repo().find_remote("archive").unwrap();
+        assert_eq!(remote.url(), Some(new_url.as_str()));
     }
 }
