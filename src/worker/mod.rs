@@ -20,6 +20,7 @@ pub trait RunnerExt {
 impl RunnerExt for Runner<Arc<Environment>> {
     fn register_crates_io_job_types(self) -> Self {
         self.register_job_type::<jobs::AnalyzeCrateFile>()
+            .register_job_type::<jobs::ArchiveIndexBranch>()
             .register_job_type::<jobs::ArchiveVersionDownloads>()
             .register_job_type::<jobs::BulkSyncToGitIndex>()
             .register_job_type::<jobs::CheckTyposquat>()

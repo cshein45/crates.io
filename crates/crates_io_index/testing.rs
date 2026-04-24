@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use git2::build::TreeUpdateBuilder;
-use git2::{ErrorCode, FileMode, Repository, Sort};
+use git2::{ErrorCode, FileMode, Oid, Repository, Sort};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread;
@@ -162,6 +162,43 @@ impl UpstreamIndex {
 
         let sig = repo.signature()?;
         repo.commit(Some("HEAD"), &sig, &sig, &message, &new_tree, &[&parent])?;
+
+        Ok(())
+    }
+
+    /// Resolve the given branch to the commit it points at.
+    pub fn branch_oid(&self, branch: &str) -> anyhow::Result<Oid> {
+        let repo = self.repository.lock().unwrap();
+        let ref_name = format!("refs/heads/{branch}");
+        let reference = repo.find_reference(&ref_name)?;
+        Ok(reference.peel_to_commit()?.id())
+    }
+
+    /// Create a branch with a single parentless commit containing the given
+    /// file. Mirrors the shape of post-squash snapshot branches, which share
+    /// no common ancestor with `master`.
+    pub fn create_orphan_branch(
+        &self,
+        branch: &str,
+        path: &str,
+        content: &str,
+    ) -> anyhow::Result<()> {
+        let repo = self.repository.lock().unwrap();
+        let sig = repo.signature()?;
+
+        let blob_oid = repo.blob(content.as_bytes())?;
+        let empty_tree_oid = repo.treebuilder(None)?.write()?;
+        let empty_tree = repo.find_tree(empty_tree_oid)?;
+        let tree_oid = TreeUpdateBuilder::new()
+            .upsert(PathBuf::from(path), blob_oid, FileMode::Blob)
+            .create_updated(&repo, &empty_tree)?;
+        let tree = repo.find_tree(tree_oid)?;
+
+        let message = format!("Orphan commit on `{branch}`");
+        let commit_oid = repo.commit(None, &sig, &sig, &message, &tree, &[])?;
+
+        let ref_name = format!("refs/heads/{branch}");
+        repo.reference(&ref_name, commit_oid, true, "create orphan branch")?;
 
         Ok(())
     }

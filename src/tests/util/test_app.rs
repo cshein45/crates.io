@@ -216,14 +216,22 @@ impl TestApp {
     }
 
     pub async fn run_pending_background_jobs(&self) {
+        self.try_run_pending_background_jobs()
+            .await
+            .expect("Could not determine if jobs failed");
+    }
+
+    /// Run all pending background jobs and return an error if any of them
+    /// failed. Intended for tests that deliberately exercise a job's failure
+    /// path.
+    pub async fn try_run_pending_background_jobs(&self) -> anyhow::Result<()> {
         let runner = &self.0.runner;
         let runner = runner.as_ref().expect("Index has not been initialized");
 
         let handle = runner.start();
         handle.wait_for_shutdown().await;
 
-        let result = runner.check_for_failed_jobs().await;
-        result.expect("Could not determine if jobs failed");
+        runner.check_for_failed_jobs().await
     }
 
     /// Obtain a reference to the inner `App` value
@@ -530,6 +538,7 @@ fn simple_config() -> config::Server {
         banner_message: None,
         index_include_pubtime: false,
         sparse_index_fastly_enabled: true,
+        index_archive_url: None,
     }
 }
 
