@@ -4,6 +4,7 @@ use crate::worker::jobs::ArchiveIndexBranch;
 use chrono::Utc;
 use crates_io_worker::BackgroundJob;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
@@ -28,17 +29,12 @@ impl BackgroundJob for SquashIndex {
         let snapshot_branch = spawn_blocking(move || {
             let repo = env_for_blocking.lock_index()?;
 
-            let now = Utc::now().format("%F");
-            let snapshot_branch = format!("snapshot-{now}");
+            let snapshot_branch = snapshot_branch_name();
 
             let original_head = repo.head_oid()?;
             info!("Read original HEAD: {original_head}");
 
-            let msg = format!("Collapse index into one commit\n\n\
-            Previous HEAD was {original_head}, now on the `{snapshot_branch}` branch\n\n\
-            More information about this change can be found [online] and on [this issue].\n\n\
-            [online]: https://internals.rust-lang.org/t/cargos-crate-index-upcoming-squash-into-one-commit/8440\n\
-            [this issue]: https://github.com/rust-lang/crates-io-cargo-teams/issues/47");
+            let msg = squash_commit_message(original_head, &snapshot_branch);
 
             let squash_start = Instant::now();
             repo.squash_to_single_commit(&msg)?;
@@ -86,4 +82,19 @@ async fn enqueue_archive_job(env: &Environment, branch: &str) -> anyhow::Result<
     let conn = env.deadpool.get().await?;
     ArchiveIndexBranch::new(branch).enqueue(&conn).await?;
     Ok(())
+}
+
+fn snapshot_branch_name() -> String {
+    let now = Utc::now().format("%F");
+    format!("snapshot-{now}")
+}
+
+fn squash_commit_message(original_head: impl fmt::Display, snapshot_branch: &str) -> String {
+    format!(
+        "Collapse index into one commit\n\n\
+        Previous HEAD was {original_head}, now on the `{snapshot_branch}` branch\n\n\
+        More information about this change can be found [online] and on [this issue].\n\n\
+        [online]: https://internals.rust-lang.org/t/cargos-crate-index-upcoming-squash-into-one-commit/8440\n\
+        [this issue]: https://github.com/rust-lang/crates-io-cargo-teams/issues/47"
+    )
 }
