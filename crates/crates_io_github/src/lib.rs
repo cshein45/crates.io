@@ -47,6 +47,20 @@ pub trait GitHubClient: Send + Sync {
         auth: &AccessToken,
     ) -> Result<Option<GitHubOrgMembership>>;
     async fn public_keys(&self, username: &str, password: &str) -> Result<Vec<GitHubPublicKey>>;
+
+    /// Fetches a single git ref.
+    ///
+    /// `ref_name` may be given either fully qualified (e.g.
+    /// `"refs/heads/master"`) or without the `refs/` prefix (e.g.
+    /// `"heads/master"`). The call is unauthenticated; the crates.io
+    /// index repositories are public and the 60/hour unauthenticated
+    /// rate limit is plenty for this use case.
+    async fn get_ref(&self, owner: &str, repo: &str, ref_name: &str) -> Result<GitRef>;
+
+    /// Fetches a single commit object by its SHA.
+    ///
+    /// Unauthenticated, same rationale as [`GitHubClient::get_ref`].
+    async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GitCommit>;
 }
 
 #[derive(Debug)]
@@ -178,6 +192,17 @@ impl GitHubClient for RealGitHubClient {
             Err(e) => Err(e),
         }
     }
+
+    async fn get_ref(&self, owner: &str, repo: &str, ref_name: &str) -> Result<GitRef> {
+        let ref_path = ref_name.strip_prefix("refs/").unwrap_or(ref_name);
+        let path = format!("/repos/{owner}/{repo}/git/ref/{ref_path}");
+        self._request(&path, std::convert::identity).await
+    }
+
+    async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GitCommit> {
+        let path = format!("/repos/{owner}/{repo}/git/commits/{sha}");
+        self._request(&path, std::convert::identity).await
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -262,6 +287,28 @@ pub struct GitHubPublicKeyList {
     pub public_keys: Vec<GitHubPublicKey>,
 }
 
+/// A git ref on GitHub.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitRef {
+    /// The fully qualified ref name (e.g. `"refs/heads/master"`).
+    #[serde(rename = "ref")]
+    pub ref_name: String,
+    pub object: GitObject,
+}
+
+/// A git object referenced from a ref or commit.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitObject {
+    pub sha: String,
+}
+
+/// A git commit on GitHub.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitCommit {
+    pub sha: String,
+    pub tree: GitObject,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +335,32 @@ mod tests {
         "name": "John Doe"
     }"#;
 
+    const REF_BODY: &str = r#"{
+        "ref": "refs/heads/master",
+        "node_id": "abc",
+        "url": "https://api.github.com/ignored",
+        "object": {
+            "type": "commit",
+            "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "url": "https://api.github.com/ignored"
+        }
+    }"#;
+
+    const COMMIT_BODY: &str = r#"{
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "node_id": "abc",
+        "url": "https://api.github.com/ignored",
+        "html_url": "https://github.com/ignored",
+        "author": {"name": "bors", "email": "bors@rust-lang.org", "date": "2026-04-24T00:00:00Z"},
+        "committer": {"name": "bors", "email": "bors@rust-lang.org", "date": "2026-04-24T00:00:00Z"},
+        "tree": {
+            "sha": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            "url": "https://api.github.com/ignored"
+        },
+        "message": "ignored",
+        "parents": []
+    }"#;
+
     #[tokio::test]
     async fn get_user_hits_configured_base_url() {
         let mut server = mock_server().await;
@@ -306,5 +379,80 @@ mod tests {
 
         assert_eq!(user.login, "johnnydee");
         assert_eq!(user.id, 1);
+    }
+
+    #[tokio::test]
+    async fn get_ref_strips_refs_prefix_and_returns_sha() {
+        let mut server = mock_server().await;
+        let _mock = server
+            .mock(
+                "GET",
+                "/repos/rust-lang/crates.io-index/git/ref/heads/master",
+            )
+            .match_header("accept", "application/vnd.github.v3+json")
+            .match_header("user-agent", "crates.io (https://crates.io)")
+            .with_status(200)
+            .with_body(REF_BODY)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = client_with_server(&server);
+        let got = client
+            .get_ref("rust-lang", "crates.io-index", "refs/heads/master")
+            .await
+            .unwrap();
+
+        assert_eq!(got.ref_name, "refs/heads/master");
+        assert_eq!(got.object.sha, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    }
+
+    #[tokio::test]
+    async fn get_ref_accepts_unqualified_ref_name() {
+        let mut server = mock_server().await;
+        let _mock = server
+            .mock(
+                "GET",
+                "/repos/rust-lang/crates.io-index/git/ref/heads/master",
+            )
+            .with_status(200)
+            .with_body(REF_BODY)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = client_with_server(&server);
+        let got = client
+            .get_ref("rust-lang", "crates.io-index", "heads/master")
+            .await
+            .unwrap();
+
+        assert_eq!(got.ref_name, "refs/heads/master");
+    }
+
+    #[tokio::test]
+    async fn get_commit_returns_sha_and_tree_sha() {
+        let mut server = mock_server().await;
+        let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let _mock = server
+            .mock(
+                "GET",
+                format!("/repos/rust-lang/crates.io-index/git/commits/{sha}").as_str(),
+            )
+            .match_header("accept", "application/vnd.github.v3+json")
+            .with_status(200)
+            .with_body(COMMIT_BODY)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = client_with_server(&server);
+        let got = client
+            .get_commit("rust-lang", "crates.io-index", sha)
+            .await
+            .unwrap();
+
+        assert_eq!(got.sha, sha);
+        assert_eq!(got.tree.sha, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     }
 }
