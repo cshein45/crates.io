@@ -3,6 +3,10 @@
 #[macro_use]
 extern crate tracing;
 
+mod slug;
+
+pub use crate::slug::{ParseSlugError, parse_github_slug};
+
 use oauth2::AccessToken;
 use reqwest::{self, RequestBuilder, header};
 
