@@ -17,6 +17,7 @@ use std::str;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
+use url::Url;
 
 type Result<T> = std::result::Result<T, GitHubError>;
 
@@ -51,11 +52,17 @@ pub trait GitHubClient: Send + Sync {
 #[derive(Debug)]
 pub struct RealGitHubClient {
     client: Client,
+    base_url: Url,
 }
 
 impl RealGitHubClient {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        let base_url = Url::parse("https://api.github.com").expect("base URL must parse");
+        Self::with_base_url(client, base_url)
+    }
+
+    fn with_base_url(client: Client, base_url: Url) -> Self {
+        Self { client, base_url }
     }
 
     /// Does all the nonsense for sending a GET to GitHub.
@@ -64,12 +71,15 @@ impl RealGitHubClient {
         T: DeserializeOwned,
         A: Fn(RequestBuilder) -> RequestBuilder,
     {
-        let url = format!("https://api.github.com{url}");
+        let url = self
+            .base_url
+            .join(url.trim_start_matches('/'))
+            .map_err(|e| GitHubError::Other(e.into()))?;
         info!("GitHub request: GET {url}");
 
         let request = self
             .client
-            .get(&url)
+            .get(url)
             .header(header::ACCEPT, "application/vnd.github.v3+json")
             .header(header::USER_AGENT, "crates.io (https://crates.io)");
 
