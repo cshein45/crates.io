@@ -33,6 +33,7 @@ use std::sync::LazyLock;
 use std::{rc::Rc, sync::Arc, time::Duration};
 use tokio::runtime::Handle;
 use tokio::task::block_in_place;
+use url::Url;
 
 struct TestAppInner {
     app: Arc<App>,
@@ -109,6 +110,7 @@ impl TestApp {
         TestAppBuilder {
             config: simple_config(),
             index: None,
+            index_location: None,
             build_job_runner: false,
             use_chaos_proxy: false,
             team_repo: MockTeamRepo::new(),
@@ -269,6 +271,7 @@ impl TestApp {
 pub struct TestAppBuilder {
     config: config::Server,
     index: Option<UpstreamIndex>,
+    index_location: Option<Url>,
     build_job_runner: bool,
     use_chaos_proxy: bool,
     team_repo: MockTeamRepo,
@@ -323,13 +326,14 @@ impl TestAppBuilder {
         let (app, router) = build_app(self.config, Arc::clone(&github), self.oidc_key_stores);
 
         let runner = if self.build_job_runner {
-            let index = self
-                .index
-                .as_ref()
-                .expect("Index must be initialized to build a job runner");
+            let index_location = self
+                .index_location
+                .clone()
+                .or_else(|| self.index.as_ref().map(|i| i.url()))
+                .expect("Index or `index_location` must be configured to build a job runner");
 
             let repository_config = RepositoryConfig {
-                index_location: index.url(),
+                index_location,
                 credentials: Credentials::Missing,
             };
 
@@ -414,6 +418,15 @@ impl TestAppBuilder {
 
     pub fn with_git_index(mut self) -> Self {
         self.index = Some(UpstreamIndex::new().unwrap());
+        self
+    }
+
+    /// Override the `index_location` URL used for the worker
+    /// [`RepositoryConfig`]. Used by tests that exercise jobs which
+    /// parse the URL (e.g. [`crates_io::worker::jobs::SquashIndexViaApi`])
+    /// but do not touch the local bare repo.
+    pub fn with_index_location(mut self, url: Url) -> Self {
+        self.index_location = Some(url);
         self
     }
 

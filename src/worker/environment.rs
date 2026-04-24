@@ -28,7 +28,7 @@ use tracing::{info, instrument};
 pub struct Environment {
     pub config: Arc<crate::config::Server>,
 
-    repository_config: RepositoryConfig,
+    pub repository_config: RepositoryConfig,
     #[builder(skip)]
     repository: Mutex<Option<Repository>>,
     cloudfront: Option<CloudFront>,
