@@ -261,3 +261,50 @@ pub struct GitHubPublicKey {
 pub struct GitHubPublicKeyList {
     pub public_keys: Vec<GitHubPublicKey>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::{Server, ServerOpts};
+
+    async fn mock_server() -> Server {
+        Server::new_with_opts_async(ServerOpts {
+            assert_on_drop: true,
+            ..Default::default()
+        })
+        .await
+    }
+
+    fn client_with_server(server: &Server) -> RealGitHubClient {
+        let base_url = Url::parse(&server.url()).unwrap();
+        RealGitHubClient::with_base_url(Client::new(), base_url)
+    }
+
+    const USER_BODY: &str = r#"{
+        "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
+        "email": null,
+        "id": 1,
+        "login": "johnnydee",
+        "name": "John Doe"
+    }"#;
+
+    #[tokio::test]
+    async fn get_user_hits_configured_base_url() {
+        let mut server = mock_server().await;
+        let _mock = server
+            .mock("GET", "/users/johnnydee")
+            .match_header("authorization", "Bearer test-token")
+            .with_status(200)
+            .with_body(USER_BODY)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = client_with_server(&server);
+        let auth = AccessToken::new("test-token".into());
+        let user = client.get_user("johnnydee", &auth).await.unwrap();
+
+        assert_eq!(user.login, "johnnydee");
+        assert_eq!(user.id, 1);
+    }
+}
