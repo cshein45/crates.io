@@ -40,7 +40,7 @@ pub struct App {
     pub replica_database: Option<DeadpoolPool<AsyncPgConnection>>,
 
     /// GitHub API client
-    pub github: Box<dyn GitHubClient>,
+    pub github: Arc<dyn GitHubClient>,
 
     /// The GitHub OAuth2 configuration
     pub github_oauth:

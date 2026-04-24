@@ -23,12 +23,14 @@ use crates_io::{Emails, config};
 use crates_io_docs_rs::RealDocsRsClient;
 use crates_io_env_vars::{required_var, var};
 use crates_io_fastly::Fastly;
+use crates_io_github::{GitHubClient, RealGitHubClient};
 use crates_io_github_app::{GitHubApp, GitHubAppClient};
 use crates_io_index::RepositoryConfig;
 use crates_io_og_image::OgImageGenerator;
 use crates_io_team_repo::TeamRepoImpl;
 use crates_io_worker::Runner;
 use object_store::prefix::PrefixStore;
+use reqwest::Client;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
@@ -74,6 +76,9 @@ fn main() -> anyhow::Result<()> {
 
     let repository_config = RepositoryConfig::from_environment()?;
 
+    let user_agent = crates_io_version::user_agent();
+    let http_client = Client::builder().user_agent(user_agent).build()?;
+
     let cloudfront = CloudFront::from_environment();
     let storage = Arc::new(Storage::from_config(&config.storage));
 
@@ -89,6 +94,7 @@ fn main() -> anyhow::Result<()> {
 
     let docs_rs = RealDocsRsClient::from_environment().map(|cl| Box::new(cl) as _);
 
+    let github: Arc<dyn GitHubClient> = Arc::new(RealGitHubClient::new(http_client));
     let github_app = build_github_app(config.index_archive_url.as_ref())?;
 
     let deadpool = create_database_pool(&config.db.primary);
@@ -105,6 +111,7 @@ fn main() -> anyhow::Result<()> {
         .maybe_docs_rs(docs_rs)
         .team_repo(Box::new(team_repo))
         .maybe_github_app(github_app)
+        .github(github)
         .og_image_generator(OgImageGenerator::from_environment()?)
         .build();
 

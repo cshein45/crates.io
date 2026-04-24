@@ -8,6 +8,7 @@ use bon::Builder;
 use crates_io_database::models::{CloudFrontDistribution, CloudFrontInvalidationQueueItem};
 use crates_io_docs_rs::DocsRsClient;
 use crates_io_fastly::Fastly;
+use crates_io_github::GitHubClient;
 use crates_io_github_app::GitHubApp;
 use crates_io_index::{Repository, RepositoryConfig};
 use crates_io_og_image::OgImageGenerator;
@@ -38,6 +39,7 @@ pub struct Environment {
     pub emails: Emails,
     pub team_repo: Box<dyn TeamRepo + Send + Sync>,
     pub github_app: Option<Arc<dyn GitHubApp>>,
+    pub github: Arc<dyn GitHubClient>,
     pub docs_rs: Option<Box<dyn DocsRsClient>>,
     pub og_image_generator: Option<OgImageGenerator>,
 

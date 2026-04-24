@@ -14,7 +14,7 @@ use crates_io::util::gh_token_encryption::GitHubTokenEncryption;
 use crates_io::worker::{Environment, RunnerExt};
 use crates_io::{App, Emails, Env};
 use crates_io_docs_rs::MockDocsRsClient;
-use crates_io_github::MockGitHubClient;
+use crates_io_github::{GitHubClient, MockGitHubClient};
 use crates_io_github_app::MockGitHubApp;
 use crates_io_index::testing::UpstreamIndex;
 use crates_io_index::{Credentials, RepositoryConfig};
@@ -315,7 +315,12 @@ impl TestAppBuilder {
             (primary_proxy, replica_proxy)
         };
 
-        let (app, router) = build_app(self.config, self.github, self.oidc_key_stores);
+        let github: Arc<dyn GitHubClient> = match self.github {
+            Some(github) => Arc::new(github),
+            None => Arc::new(MOCK_GITHUB_DATA.as_mock_client()),
+        };
+
+        let (app, router) = build_app(self.config, Arc::clone(&github), self.oidc_key_stores);
 
         let runner = if self.build_job_runner {
             let index = self
@@ -337,6 +342,7 @@ impl TestAppBuilder {
                 .maybe_docs_rs(self.docs_rs.map(|cl| Box::new(cl) as _))
                 .team_repo(Box::new(self.team_repo))
                 .maybe_github_app(self.github_app.map(|a| Arc::new(a) as _))
+                .github(github)
                 .maybe_og_image_generator(self.og_image_generator)
                 .build();
 
@@ -558,15 +564,12 @@ fn simple_config() -> config::Server {
 
 fn build_app(
     config: config::Server,
-    github: Option<MockGitHubClient>,
+    github: Arc<dyn GitHubClient>,
     oidc_key_stores: HashMap<String, Box<dyn OidcKeyStore>>,
 ) -> (Arc<App>, axum::Router) {
     // Use the in-memory email backend for all tests, allowing tests to analyze the emails sent by
     // the application. This will also prevent cluttering the filesystem.
     let emails = Emails::new_in_memory();
-
-    let github = github.unwrap_or_else(|| MOCK_GITHUB_DATA.as_mock_client());
-    let github = Box::new(github);
 
     let app = App::builder()
         .databases_from_config(&config.db)
