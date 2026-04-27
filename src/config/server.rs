@@ -138,8 +138,10 @@ impl Server {
     ///   by an operator (e.g. `/crates/{crate_id}/{version}/download`).
     /// - `DISABLE_TOKEN_CREATION`: If set to any non-empty value, disables API token creation
     ///   and uses the value as the error message returned to users.
-    /// - `GIT_ARCHIVE_REPO_URL`: URL of a git repository to mirror the crate index's snapshot
-    ///   branches to. If unset the `ArchiveIndexBranch` background job is a no-op.
+    /// - `GIT_ARCHIVE_REPO_URL`: HTTPS URL (e.g. `https://github.com/<org>/<repo>.git`) of a git
+    ///   repository to mirror the crate index's snapshot branches to. Must be HTTPS because the
+    ///   `ArchiveIndexBranch` job authenticates via a GitHub App installation token; SSH remotes
+    ///   are not supported. If unset the job is a no-op.
     ///
     /// # Panics
     ///
