@@ -63,7 +63,16 @@ async fn blocked_traffic_doesnt_panic_if_checked_header_is_not_present() {
 async fn block_traffic_via_arbitrary_header_and_value() {
     let (app, anon, user) = TestApp::init()
         .with_config(|config| {
-            config.blocked_traffic = vec![("User-Agent".into(), vec!["1".into(), "2".into()])];
+            config.blocked_traffic = vec![
+                (
+                    "User-Agent".into(),
+                    vec![
+                        "1".into(),
+                        "2".into(),
+                        "fancy-crate, run by fancy-author v[\\d]+\\.[\\d]+\\.[\\d]+".into(),
+                    ]
+                )
+            ];
         })
         .with_user()
         .await;
@@ -91,6 +100,30 @@ async fn block_traffic_via_arbitrary_header_and_value() {
         .header(
             header::USER_AGENT,
             "1value-must-match-exactly-this-is-allowed",
+        )
+        .body("")
+        .unwrap();
+
+    let resp = anon.run::<()>(req).await;
+    assert_eq!(resp.status(), StatusCode::FOUND);
+
+    let req = Request::get("/api/v1/crates/dl_no_ua/0.99.0/download")
+        // A request with a header value that literally matches the regex we want to block isn't
+        // allowed; regexes aren't supported as regexes yet
+        .header(header::USER_AGENT, "fancy-crate, run by fancy-author v[\\d]+\\.[\\d]+\\.[\\d]+")
+        .header("x-request-id", "abcd")
+        .body("")
+        .unwrap();
+
+    let resp = anon.run::<()>(req).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let req = Request::get("/api/v1/crates/dl_no_ua/0.99.0/download")
+        // A request with a header value we want to block via regex is allowed; regexes aren't
+        // supported yet
+        .header(
+            header::USER_AGENT,
+            "fancy-crate, run by fancy-author v14.105.6234",
         )
         .body("")
         .unwrap();
