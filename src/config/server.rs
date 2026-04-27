@@ -280,12 +280,17 @@ fn blocked_traffic() -> Vec<(String, Vec<String>)> {
     parse_traffic_patterns(&pattern_list)
         .map(|(header, value_env_var)| {
             let value_list = dotenvy::var(value_env_var).unwrap_or_default();
-            let values = value_list.split(',').map(String::from).collect();
+            let values = parse_traffic_pattern_values(&value_list);
             (header.into(), values)
         })
         .collect()
 }
 
+/// Extract from the `BLOCKED_TRAFFIC` env var value a comma-separated list of pairs containing a
+/// header name, an equals sign, and the name of another environment variable that contains the
+/// values of that header that should be blocked. For example, if `BLOCKED_TRAFFIC` is set to
+/// `User-Agent=BLOCKED_UAS,custom-header=BLOCKED_CUSTOM`, this function will return the pairs
+/// (`User-Agent`, `BLOCKED_UAS`) and (`custom-header`, `BLOCKED_CUSTOM`).
 fn parse_traffic_patterns(patterns: &str) -> impl Iterator<Item = (&str, &str)> {
     patterns.split_terminator(',').map(|pattern| {
         pattern.split_once('=').unwrap_or_else(|| {
@@ -295,6 +300,13 @@ fn parse_traffic_patterns(patterns: &str) -> impl Iterator<Item = (&str, &str)> 
             )
         })
     })
+}
+
+/// After reading the value of an environment variable whose name was specified in the value of
+/// `BLOCKED_TRAFFIC`, parse a comma-separated list of values to be used as exact matches of the
+/// values of the header name specified in the `BLOCKED_TRAFFIC` pair.
+fn parse_traffic_pattern_values(value_list: &str) -> Vec<String> {
+    value_list.split(',').map(String::from).collect()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -340,5 +352,20 @@ mod tests {
         assert_eq!(vec![("Baz", "QUX")], patterns_2);
 
         assert_none!(parse_traffic_patterns(pattern_string_3).next());
+    }
+
+    #[test]
+    fn parse_traffic_pattern_values_splits_on_comma_even_if_escaping_is_attempted() {
+        let pattern = "web-tool 1.2.3,fancy-crate\\, run by fancy-author v4.5.6";
+
+        let values = parse_traffic_pattern_values(pattern);
+        assert_eq!(
+            vec![
+                String::from("web-tool 1.2.3"),
+                String::from("fancy-crate\\"),
+                String::from(" run by fancy-author v4.5.6"),
+            ],
+            values
+        );
     }
 }
