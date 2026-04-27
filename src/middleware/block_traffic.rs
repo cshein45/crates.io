@@ -21,23 +21,28 @@ pub async fn middleware(
     Ok(next.run(req).await)
 }
 
-/// Middleware that blocks requests if a header matches the given list
+/// Middleware that blocks requests if a header matches the given regex list
 ///
 /// To use, set the `BLOCKED_TRAFFIC` environment variable to a comma-separated list of pairs
 /// containing a header name, an equals sign, and the name of another environment variable that
-/// contains the values of that header that should be blocked. For example, set `BLOCKED_TRAFFIC`
-/// to `User-Agent=BLOCKED_UAS` and `BLOCKED_UAS` to `curl/7.54.0,cargo 1.36.0 (c4fcfb725 2019-05-15)`
-/// to block requests from the versions of curl or Cargo specified (values are nonsensical examples).
-/// Values of the headers must match exactly.
+/// contains the regex pattern values of that header that should be blocked.
+///
+/// For example, set `BLOCKED_TRAFFIC` to `User-Agent=BLOCKED_UAS` and `BLOCKED_UAS` to
+/// `curl/[\d]+\.[\d]+\.[\d]+,cargo 1\.36\.0 \(c4fcfb725 2019-05-15\)` to block requests from any
+/// version of curl and the exact version of Cargo specified (values are nonsensical examples).
+///
+/// Values of the headers must fully match the regex; that is, `^` and `$` are automatically added
+/// around every regex specified.
 pub fn block_by_header(state: &AppState, req: &Request) -> Result<(), impl IntoResponse> {
     let blocked_traffic = &state.config.blocked_traffic;
 
     for (header_name, blocked_values) in blocked_traffic {
-        let has_blocked_value = req
-            .headers()
-            .get_all(header_name)
-            .iter()
-            .any(|value| blocked_values.iter().any(|v| v == value));
+        let has_blocked_value = req.headers().get_all(header_name).iter().any(|value| {
+            value
+                .to_str()
+                .map(|ascii_val| blocked_values.iter().any(|v| v.is_match(ascii_val)))
+                .unwrap_or(false)
+        });
         if has_blocked_value {
             let cause = format!("blocked due to contents of header {header_name}");
             req.request_log().add("cause", cause);

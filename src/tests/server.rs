@@ -42,7 +42,7 @@ async fn user_agent_is_not_required_for_download() {
 async fn blocked_traffic_doesnt_panic_if_checked_header_is_not_present() {
     let (app, anon, user) = TestApp::init()
         .with_config(|config| {
-            config.blocked_traffic = vec![("Never-Given".into(), vec!["1".into()])];
+            config.blocked_traffic = vec![("Never-Given".into(), vec!["^1$".try_into().unwrap()])];
         })
         .with_user()
         .await;
@@ -63,16 +63,18 @@ async fn blocked_traffic_doesnt_panic_if_checked_header_is_not_present() {
 async fn block_traffic_via_arbitrary_header_and_value() {
     let (app, anon, user) = TestApp::init()
         .with_config(|config| {
-            config.blocked_traffic = vec![
-                (
-                    "User-Agent".into(),
-                    vec![
-                        "1".into(),
-                        "2".into(),
-                        "fancy-crate, run by fancy-author v[\\d]+\\.[\\d]+\\.[\\d]+".into(),
-                    ]
-                )
-            ];
+            config.blocked_traffic = vec![(
+                "User-Agent".into(),
+                vec![
+                    // The `parse_traffic_pattern_values` function automatically adds `^` and `$`
+                    // around the specified values, but these tests set the regex values directly
+                    "^1$".try_into().unwrap(),
+                    "^2$".try_into().unwrap(),
+                    "^fancy-crate, run by fancy-author v[\\d]+\\.[\\d]+\\.[\\d]+$"
+                        .try_into()
+                        .unwrap(),
+                ],
+            )];
         })
         .with_user()
         .await;
@@ -108,19 +110,20 @@ async fn block_traffic_via_arbitrary_header_and_value() {
     assert_eq!(resp.status(), StatusCode::FOUND);
 
     let req = Request::get("/api/v1/crates/dl_no_ua/0.99.0/download")
-        // A request with a header value that literally matches the regex we want to block isn't
-        // allowed; regexes aren't supported as regexes yet
-        .header(header::USER_AGENT, "fancy-crate, run by fancy-author v[\\d]+\\.[\\d]+\\.[\\d]+")
+        // A request with a header value that has a substring match for the regex we want to block
+        // is allowed; regexes must be complete matches
+        .header(
+            header::USER_AGENT,
+            "fancy-crate, run by fancy-author v1.2.3 oh and other stuff too",
+        )
         .header("x-request-id", "abcd")
         .body("")
         .unwrap();
-
     let resp = anon.run::<()>(req).await;
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::FOUND);
 
     let req = Request::get("/api/v1/crates/dl_no_ua/0.99.0/download")
-        // A request with a header value we want to block via regex is allowed; regexes aren't
-        // supported yet
+        // A request with a header value we want to block via regex isn't allowed
         .header(
             header::USER_AGENT,
             "fancy-crate, run by fancy-author v14.105.6234",
@@ -129,7 +132,7 @@ async fn block_traffic_via_arbitrary_header_and_value() {
         .unwrap();
 
     let resp = anon.run::<()>(req).await;
-    assert_eq!(resp.status(), StatusCode::FOUND);
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test(flavor = "multi_thread")]
