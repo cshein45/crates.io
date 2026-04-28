@@ -80,14 +80,14 @@ impl From<&str> for BlockCriteria {
 ///
 /// To use, set the `BLOCKED_TRAFFIC` environment variable to a comma-separated list of pairs
 /// containing a header name, an equals sign, and the name of another environment variable that
-/// contains the regex pattern values of that header that should be blocked.
+/// contains the regex pattern or string values of that header that should be blocked.
 ///
 /// For example, set `BLOCKED_TRAFFIC` to `User-Agent=BLOCKED_UAS` and `BLOCKED_UAS` to
-/// `curl/[\d]+\.[\d]+\.[\d]+,cargo 1\.36\.0 \(c4fcfb725 2019-05-15\)` to block requests from any
+/// `/curl\/[\d]+\.[\d]+\.[\d]+/,cargo 1.36.0 (c4fcfb725 2019-05-15)` to block requests from any
 /// version of curl and the exact version of Cargo specified (values are nonsensical examples).
 ///
-/// Values of the headers must fully match the regex; that is, `^` and `$` are automatically added
-/// around every regex specified.
+/// Values of the headers must start and end with `/` to be interpreted as a regex. Values
+/// interpreted as strings must match exactly, in full.
 pub fn block_by_header(state: &AppState, req: &Request) -> Result<(), impl IntoResponse> {
     let blocked_traffic = &state.config.blocked_traffic;
 
