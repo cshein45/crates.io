@@ -4,8 +4,9 @@ use anyhow::anyhow;
 use crates_io_worker::BackgroundJob;
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use std::sync::Arc;
+use std::time::Instant;
+use tokio::process::Command;
 use tracing::{info, instrument, warn};
 use url::Url;
 
@@ -27,56 +28,117 @@ impl ArchiveIndexBranch {
 impl BackgroundJob for ArchiveIndexBranch {
     const JOB_NAME: &'static str = "archive_index_branch";
     const DEDUPLICATED: bool = true;
-    const QUEUE: &'static str = "repository";
 
     type Context = Arc<Environment>;
 
     /// Mirror a snapshot branch from the crate index to the configured archive
     /// repository. No-op when no archive URL is configured.
+    ///
+    /// Each invocation works against a fresh, ephemeral bare clone of the
+    /// snapshot branch in a `TempDir`. The job does not share state with the
+    /// long-lived bare clone behind `Environment::lock_index()`.
     #[instrument(skip_all, fields(branch = self.branch))]
     async fn run(&self, env: Self::Context) -> anyhow::Result<()> {
-        let Some(archive_url) = env.config.index_archive_url.clone() else {
+        let Some(archive_url) = env.config.index_archive_url.as_ref() else {
             info!("`index_archive_url` not configured, skipping archive push");
             return Ok(());
         };
 
         let Some(github_app) = env.github_app.as_ref() else {
-            return Err(anyhow!(
-                "`index_archive_url` is set but GitHub App is not configured"
-            ));
+            let error = anyhow!("`index_archive_url` is set but GitHub App is not configured");
+            return Err(error);
         };
-        let github_app = github_app.clone();
 
-        info!(%archive_url, "Pushing snapshot to archive repository");
+        info!(
+            "Cloning snapshot branch ({branch}) from the index repository",
+            branch = self.branch
+        );
 
-        let branch = self.branch.clone();
-        let handle = tokio::runtime::Handle::current();
+        // `TempDir` create/drop are sync filesystem I/O. The bare clone is one
+        // large packfile plus a handful of small refs/config files, so
+        // `remove_dir_all` cost is bounded by inode count, not pack size, and
+        // should stay brief enough to run on the async runtime.
+        let tempdir = tempfile::Builder::new()
+            .prefix("snapshot-clone")
+            .tempdir()?;
 
-        spawn_blocking(move || {
-            let repo = env.lock_index()?;
+        let clone_start = Instant::now();
+        let output = Command::new("git")
+            .args([
+                "clone",
+                "--bare",
+                "--single-branch",
+                "--branch",
+                &self.branch,
+                env.repository_config.index_location.as_str(),
+            ])
+            // `tempdir.path()` is `&Path`, so it can't share the `&str` array above.
+            .arg(tempdir.path())
+            .output()
+            .await?;
 
-            repo.run_command(Command::new("git").args(["fetch", "origin", &branch]))?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "git clone failed: {}{}",
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout)
+            ));
+        }
 
-            let token = handle.block_on(github_app.installation_token())?;
-            let push_url = match build_credentialed_url(&archive_url, token.expose_secret()) {
-                Ok(url) => url,
-                Err(()) => {
-                    warn!(%archive_url, "Archive URL does not support credentials; pushing without auth");
-                    archive_url.clone()
-                }
-            };
+        info!(
+            duration = clone_start.elapsed().as_nanos(),
+            "Cloned snapshot branch ({branch})",
+            branch = self.branch,
+        );
 
-            let _remote = repo.add_temporary_remote(REMOTE_NAME, &push_url)?;
-            repo.run_command(Command::new("git").args([
-                "push",
-                REMOTE_NAME,
-                &format!("FETCH_HEAD:refs/heads/{branch}"),
-            ]))?;
+        let token = github_app.installation_token().await?;
+        let push_url = match build_credentialed_url(archive_url, token.expose_secret()) {
+            Ok(url) => url,
+            Err(()) => {
+                warn!(
+                    "Archive URL ({archive_url}) does not support credentials; pushing without auth"
+                );
+                archive_url.clone()
+            }
+        };
 
-            info!("Snapshot pushed to archive repository.");
+        let bare_path = tempdir.path().to_owned();
+        spawn_blocking(move || -> anyhow::Result<()> {
+            // Use `git2` here so the credentialed URL is written only into the
+            // tempdir's `.git/config` and never appears in process argv or logs.
+            let repo = git2::Repository::open_bare(&bare_path)?;
+            repo.remote(REMOTE_NAME, push_url.as_str())?;
             Ok(())
         })
-        .await?
+        .await??;
+        info!("Added archive repository as `{REMOTE_NAME}` remote");
+
+        info!(
+            "Pushing snapshot branch ({branch}) to archive repository ({archive_url})",
+            branch = self.branch
+        );
+        let refspec = format!("{branch}:refs/heads/{branch}", branch = self.branch);
+        let push_start = Instant::now();
+        let output = Command::new("git")
+            .current_dir(tempdir.path())
+            .args(["push", REMOTE_NAME, &refspec])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "git push failed: {}{}",
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout)
+            ));
+        }
+
+        info!(
+            duration = push_start.elapsed().as_nanos(),
+            "Snapshot pushed to archive repository"
+        );
+
+        Ok(())
     }
 }
 

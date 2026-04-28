@@ -17,5 +17,5 @@ pub mod testing;
 pub use crate::commit_builder::CommitBuilder;
 pub use crate::credentials::Credentials;
 pub use crate::data::{Crate, Dependency, DependencyKind};
-pub use crate::repo::{Repository, RepositoryConfig, TemporaryRemote};
+pub use crate::repo::{Repository, RepositoryConfig};
 pub use crate::ser::write_crates;
