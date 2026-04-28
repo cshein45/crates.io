@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
     let client = Client::builder().user_agent(user_agent).build()?;
 
     let github = RealGitHubClient::new(client);
-    let github = Box::new(github);
+    let github = Arc::new(github);
 
     let app = App::builder()
         .databases_from_config(&config.db)

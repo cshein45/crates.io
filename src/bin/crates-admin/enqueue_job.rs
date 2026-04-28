@@ -47,6 +47,7 @@ pub enum Command {
     ProcessCdnLogQueue(jobs::ProcessCdnLogQueue),
     SendTokenExpiryNotifications,
     SquashIndex,
+    SquashIndexViaApi,
     SyncAdmins {
         /// Force a sync even if one is already in progress
         #[arg(long)]
@@ -117,6 +118,9 @@ pub async fn run(command: Command) -> Result<()> {
         }
         Command::SquashIndex => {
             jobs::SquashIndex.enqueue(&conn).await?;
+        }
+        Command::SquashIndexViaApi => {
+            jobs::SquashIndexViaApi.enqueue(&conn).await?;
         }
         Command::SyncAdmins { force } => {
             if !force {
