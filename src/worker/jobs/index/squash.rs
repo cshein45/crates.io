@@ -143,7 +143,7 @@ impl BackgroundJob for SquashIndexViaApi {
         let new_commit = github.create_commit(&owner, &repo, &input, &auth).await?;
         let new_sha = new_commit.sha;
         let duration = squash_start.elapsed().as_nanos();
-        info!(duration, "Squash commit created: {new_sha}",);
+        info!(duration, "Squash commit created: {new_sha}");
 
         // Create the snapshot ref first so that if anything after this
         // fails, `master` is still unmoved and the snapshot ref is
@@ -159,7 +159,8 @@ impl BackgroundJob for SquashIndexViaApi {
         let current_head = github.get_ref(&owner, &repo, MASTER_REF).await?;
         if current_head.object.sha != original_sha {
             return Err(anyhow!(
-                "`master` drifted during squash (was {original_sha}, now {})",
+                "`{}` drifted during squash (was {original_sha}, now {})",
+                MASTER_REF,
                 current_head.object.sha
             ));
         }
