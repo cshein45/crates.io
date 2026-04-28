@@ -90,6 +90,25 @@ async fn enqueue_archive_job(env: &Environment, branch: &str) -> anyhow::Result<
     Ok(())
 }
 
+/// Collapses the index into a single commit by driving the GitHub API
+/// directly, without touching the local bare clone. This avoids the
+/// pack generation that `git push` triggers for the full squash, which
+/// has been OOMing the worker.
+///
+/// Git's object model has three layers we care about here: blobs hold
+/// file contents, a tree maps names to blobs (and to nested trees) to
+/// describe a directory snapshot, and a commit points at exactly one
+/// top-level tree plus its parent commits and metadata. Crucially, a
+/// tree is fully addressed by its SHA and is independent of any commit
+/// that happens to reference it.
+///
+/// That independence is what makes this squash cheap: the current
+/// `master` already points at a commit whose tree is exactly the state
+/// we want to preserve, so we can build a brand-new parentless commit
+/// that reuses that same tree SHA. No blobs or trees need to be
+/// recomputed or uploaded; GitHub already has every object we
+/// reference, and we just hand it a tiny new commit object and move
+/// `master` to point at it.
 #[derive(Serialize, Deserialize)]
 pub struct SquashIndexViaApi;
 
@@ -103,10 +122,6 @@ impl BackgroundJob for SquashIndexViaApi {
 
     type Context = Arc<Environment>;
 
-    /// Collapse the index into a single commit by driving the GitHub
-    /// REST API directly, without touching the local bare clone. This
-    /// avoids the pack generation that `git push` triggers for the full
-    /// squash, which has been OOMing the worker.
     #[instrument(skip_all)]
     async fn run(&self, env: Self::Context) -> anyhow::Result<()> {
         info!("Squashing the index into a single commit via the GitHub API");
