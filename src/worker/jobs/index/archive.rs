@@ -28,7 +28,6 @@ impl ArchiveIndexBranch {
 impl BackgroundJob for ArchiveIndexBranch {
     const JOB_NAME: &'static str = "archive_index_branch";
     const DEDUPLICATED: bool = true;
-    const QUEUE: &'static str = "repository";
 
     type Context = Arc<Environment>;
 
