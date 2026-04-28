@@ -9,11 +9,10 @@ use super::base::Base;
 use super::database_pools::DatabasePools;
 use crate::config::CdnLogQueueConfig;
 use crate::config::cdn_log_storage::CdnLogStorageConfig;
-use crate::middleware::cargo_compat::StatusCodeConfig;
+use crate::middleware::{block_traffic::BlockCriteria, cargo_compat::StatusCodeConfig};
 use crate::storage::StorageConfig;
 use crates_io_env_vars::{list, list_parsed, required_var, var, var_parsed};
 use http::HeaderValue;
-use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::net::IpAddr;
@@ -49,7 +48,7 @@ pub struct Server {
     pub max_features: usize,
     pub rate_limiter: HashMap<LimitedAction, RateLimiterConfig>,
     pub new_version_rate_limit: Option<u32>,
-    pub blocked_traffic: Vec<(String, Vec<Regex>)>,
+    pub blocked_traffic: Vec<(String, Vec<BlockCriteria>)>,
     pub blocked_ips: HashSet<IpAddr>,
     pub max_allowed_page_offset: u32,
     pub excluded_crate_names: Vec<String>,
@@ -276,7 +275,7 @@ impl Server {
     }
 }
 
-fn blocked_traffic() -> Vec<(String, Vec<Regex>)> {
+fn blocked_traffic() -> Vec<(String, Vec<BlockCriteria>)> {
     let pattern_list = dotenvy::var("BLOCKED_TRAFFIC").unwrap_or_default();
     parse_traffic_patterns(&pattern_list)
         .map(|(header, value_env_var)| {
@@ -304,21 +303,10 @@ fn parse_traffic_patterns(patterns: &str) -> impl Iterator<Item = (&str, &str)> 
 }
 
 /// After reading the value of an environment variable whose name was specified in the value of
-/// `BLOCKED_TRAFFIC`, parse a comma-separated list of values to be used as full regex matches of
-/// the values of the header name specified in the `BLOCKED_TRAFFIC` pair.
-fn parse_traffic_pattern_values(value_list: &str) -> Vec<Regex> {
-    value_list
-        .split(',')
-        .map(|value| {
-            let anchored = format!("^{}$", value);
-            Regex::new(&anchored).unwrap_or_else(|e| {
-                panic!(
-                    "BLOCKED_TRAFFIC values must be a valid regex after `^` and `$` are added, \
-                     got invalid regex {anchored}: {e}"
-                )
-            })
-        })
-        .collect()
+/// `BLOCKED_TRAFFIC`, parse a comma-separated list of values to be used as either regex matches or
+/// full string equality with the values of the header name specified in the `BLOCKED_TRAFFIC` pair.
+fn parse_traffic_pattern_values(value_list: &str) -> Vec<BlockCriteria> {
+    value_list.split(',').map(BlockCriteria::new).collect()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -368,23 +356,17 @@ mod tests {
 
     #[test]
     fn parse_traffic_pattern_values_splits_on_comma_even_if_escaping_is_attempted() {
-        let pattern = "web-tool 1.2.3,fancy-crate\\, run by fancy-author v4.5.6";
+        let pattern = "web-tool 1.2.3,fancy-crate\\, run by fancy-author v4.5.6,/.*foo.*/";
 
         let values = parse_traffic_pattern_values(pattern);
         assert_eq!(
             vec![
-                "^web-tool 1.2.3$",
-                "^fancy-crate\\$",
-                "^ run by fancy-author v4.5.6$",
+                "web-tool 1.2.3",
+                "fancy-crate\\",
+                " run by fancy-author v4.5.6",
+                ".*foo.*",
             ],
             values.iter().map(|r| r.as_str()).collect::<Vec<_>>()
         );
-    }
-
-    #[test]
-    #[should_panic(expected = "BLOCKED_TRAFFIC values must be a valid regex")]
-    fn parse_traffic_pattern_values_panics_on_invalid_regex() {
-        let pattern = ")";
-        parse_traffic_pattern_values(pattern);
     }
 }

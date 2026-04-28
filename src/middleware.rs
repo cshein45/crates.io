@@ -1,5 +1,5 @@
 pub mod app;
-mod block_traffic;
+pub mod block_traffic;
 pub mod cargo_compat;
 mod common_headers;
 mod debug;
