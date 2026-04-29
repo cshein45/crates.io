@@ -292,13 +292,14 @@ fn blocked_traffic() -> Vec<(String, Vec<BlockCriteria>)> {
 /// values of that header that should be blocked. For example, if `BLOCKED_TRAFFIC` is set to
 /// `User-Agent=BLOCKED_UAS,custom-header=BLOCKED_CUSTOM`, this function will return the pairs
 /// (`User-Agent`, `BLOCKED_UAS`) and (`custom-header`, `BLOCKED_CUSTOM`).
+///
+/// Patterns that do not contain an `=` are skipped with a warning, so that a single
+/// misconfigured entry does not prevent the remaining patterns from taking effect.
 fn parse_traffic_patterns(patterns: &str) -> impl Iterator<Item = (&str, &str)> {
-    patterns.split_terminator(',').map(|pattern| {
-        pattern.split_once('=').unwrap_or_else(|| {
-            panic!(
-                "BLOCKED_TRAFFIC must be in the form HEADER=VALUE_ENV_VAR, \
-                 got invalid pattern {pattern}"
-            )
+    patterns.split_terminator(',').filter_map(|pattern| {
+        pattern.split_once('=').or_else(|| {
+            warn!("Skipping invalid BLOCKED_TRAFFIC pattern `{pattern}`: expected HEADER=VALUE_ENV_VAR");
+            None
         })
     })
 }
@@ -367,6 +368,14 @@ mod tests {
         assert_eq!(vec![("Baz", "QUX")], patterns_2);
 
         assert_none!(parse_traffic_patterns(pattern_string_3).next());
+    }
+
+    #[test]
+    fn parse_traffic_patterns_skips_entries_missing_equals_sign() {
+        let pattern_string = "Foo=BAR,no-equals,Baz=QUX";
+
+        let patterns = parse_traffic_patterns(pattern_string).collect::<Vec<_>>();
+        assert_eq!(vec![("Foo", "BAR"), ("Baz", "QUX")], patterns);
     }
 
     #[test]
