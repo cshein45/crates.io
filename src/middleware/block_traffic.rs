@@ -29,32 +29,6 @@ pub enum BlockCriteria {
 }
 
 impl BlockCriteria {
-    /// Create new criteria to use when deciding whether to block a request.
-    ///
-    /// - If the specified string starts and ends with `/` and has at least one character between
-    ///   the slashes, interpret the value as a `Regex`.
-    /// - Otherwise, interpret the value as an exact equality match.
-    ///
-    /// # Panics
-    ///
-    /// This will panic if the specified string is interpreted as a `Regex` but the regex is
-    /// invalid.
-    pub fn new(s: &str) -> Self {
-        let is_regex = s.starts_with('/') && s.ends_with('/') && s.len() > 2;
-        if is_regex {
-            // Slicing is safe here because we checked the starting and ending characters and the
-            // length before entering this branch
-            Self::Regex(Regex::new(&s[1..s.len() - 1]).unwrap_or_else(|e| {
-                panic!(
-                    "BLOCKED_TRAFFIC values must be a valid regex after surrounding slashes are \
-                     removed, got invalid regex {s}: {e}"
-                )
-            }))
-        } else {
-            Self::String(s.into())
-        }
-    }
-
     pub fn matches(&self, value: &str) -> bool {
         match self {
             Self::Regex(r) => r.is_match(value),
@@ -70,9 +44,25 @@ impl BlockCriteria {
     }
 }
 
-impl From<&str> for BlockCriteria {
-    fn from(s: &str) -> Self {
-        Self::new(s)
+impl TryFrom<&str> for BlockCriteria {
+    type Error = regex::Error;
+
+    /// Parse a string into a [`BlockCriteria`].
+    ///
+    /// - If the specified string starts and ends with `/` and has at least one character between
+    ///   the slashes, interpret the value as a [`Regex`].
+    /// - Otherwise, interpret the value as an exact equality match.
+    ///
+    /// Returns `Err` if the value is interpreted as a regex but does not parse as one.
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        let is_regex = s.starts_with('/') && s.ends_with('/') && s.len() > 2;
+        if is_regex {
+            // Slicing is safe here because we checked the starting and ending characters and the
+            // length before entering this branch
+            Ok(Self::Regex(Regex::new(&s[1..s.len() - 1])?))
+        } else {
+            Ok(Self::String(s.into()))
+        }
     }
 }
 
@@ -162,18 +152,22 @@ mod tests {
     use insta::assert_compact_debug_snapshot;
 
     #[test]
-    #[should_panic(expected = "BLOCKED_TRAFFIC values must be a valid regex")]
-    fn new_block_criteria_panics_on_invalid_regex() {
-        BlockCriteria::new("/)/");
-    }
-
-    #[test]
-    fn new_block_criteria_string_vs_regex() {
-        assert_compact_debug_snapshot!(BlockCriteria::new("/"), @r#"String("/")"#);
-        assert_compact_debug_snapshot!(BlockCriteria::new("//"), @r#"String("//")"#);
-        assert_compact_debug_snapshot!(BlockCriteria::new("/hello i am not regex"), @r#"String("/hello i am not regex")"#);
-        assert_compact_debug_snapshot!(BlockCriteria::new("hello me neither//"), @r#"String("hello me neither//")"#);
-        assert_compact_debug_snapshot!(BlockCriteria::new("+"), @r#"String("+")"#);
-        assert_compact_debug_snapshot!(BlockCriteria::new("/yes this is regex/"), @r#"Regex(Regex("yes this is regex"))"#);
+    fn try_from_str() {
+        assert_compact_debug_snapshot!(BlockCriteria::try_from("/"), @r#"Ok(String("/"))"#);
+        assert_compact_debug_snapshot!(BlockCriteria::try_from("//"), @r#"Ok(String("//"))"#);
+        assert_compact_debug_snapshot!(BlockCriteria::try_from("/hello i am not regex"), @r#"Ok(String("/hello i am not regex"))"#);
+        assert_compact_debug_snapshot!(BlockCriteria::try_from("hello me neither//"), @r#"Ok(String("hello me neither//"))"#);
+        assert_compact_debug_snapshot!(BlockCriteria::try_from("+"), @r#"Ok(String("+"))"#);
+        assert_compact_debug_snapshot!(BlockCriteria::try_from("/yes this is regex/"), @r#"Ok(Regex(Regex("yes this is regex")))"#);
+        assert_compact_debug_snapshot!(BlockCriteria::try_from("/)/"), @"
+        Err(Syntax(
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        regex parse error:
+            )
+            ^
+        error: unopened group
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        ))
+        ");
     }
 }

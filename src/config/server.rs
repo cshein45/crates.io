@@ -306,7 +306,10 @@ fn parse_traffic_patterns(patterns: &str) -> impl Iterator<Item = (&str, &str)> 
 /// `BLOCKED_TRAFFIC`, parse a comma-separated list of values to be used as either regex matches or
 /// full string equality with the values of the header name specified in the `BLOCKED_TRAFFIC` pair.
 fn parse_traffic_pattern_values(value_list: &str) -> Vec<BlockCriteria> {
-    value_list.split(',').map(BlockCriteria::new).collect()
+    value_list
+        .split(',')
+        .map(|value| value.try_into().unwrap())
+        .collect()
 }
 
 #[derive(Clone, Debug, Default)]

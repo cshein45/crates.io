@@ -42,7 +42,7 @@ async fn user_agent_is_not_required_for_download() {
 async fn blocked_traffic_doesnt_panic_if_checked_header_is_not_present() {
     let (app, anon, user) = TestApp::init()
         .with_config(|config| {
-            config.blocked_traffic = vec![("Never-Given".into(), vec!["1".into()])];
+            config.blocked_traffic = vec![("Never-Given".into(), vec!["1".try_into().unwrap()])];
         })
         .with_user()
         .await;
@@ -67,12 +67,14 @@ async fn block_traffic_via_arbitrary_header_and_value() {
                 "User-Agent".into(),
                 vec![
                     // This is an exact string match because it doesn't start with `/`
-                    "1/".into(),
+                    "1/".try_into().unwrap(),
                     // This is also an exact string match, not interpreted as regex without slashes
-                    "2+".into(),
+                    "2+".try_into().unwrap(),
                     // Last two are regexes
-                    "/fancy-crate, run by fancy-author v[\\d]+\\.[\\d]+\\.[\\d]+/".into(),
-                    "/^anchored$/".into(),
+                    "/fancy-crate, run by fancy-author v[\\d]+\\.[\\d]+\\.[\\d]+/"
+                        .try_into()
+                        .unwrap(),
+                    "/^anchored$/".try_into().unwrap(),
                 ],
             )];
         })
