@@ -42,7 +42,7 @@ async fn user_agent_is_not_required_for_download() {
 async fn blocked_traffic_doesnt_panic_if_checked_header_is_not_present() {
     let (app, anon, user) = TestApp::init()
         .with_config(|config| {
-            config.blocked_traffic = vec![("Never-Given".into(), vec!["1".into()])];
+            config.blocked_traffic = vec![("Never-Given".into(), vec!["1".try_into().unwrap()])];
         })
         .with_user()
         .await;
@@ -63,7 +63,20 @@ async fn blocked_traffic_doesnt_panic_if_checked_header_is_not_present() {
 async fn block_traffic_via_arbitrary_header_and_value() {
     let (app, anon, user) = TestApp::init()
         .with_config(|config| {
-            config.blocked_traffic = vec![("User-Agent".into(), vec!["1".into(), "2".into()])];
+            config.blocked_traffic = vec![(
+                "User-Agent".into(),
+                vec![
+                    // This is an exact string match because it doesn't start with `/`
+                    "1/".try_into().unwrap(),
+                    // This is also an exact string match, not interpreted as regex without slashes
+                    "2+".try_into().unwrap(),
+                    // Last two are regexes
+                    "/fancy-crate, run by fancy-author v[\\d]+\\.[\\d]+\\.[\\d]+/"
+                        .try_into()
+                        .unwrap(),
+                    "/^anchored$/".try_into().unwrap(),
+                ],
+            )];
         })
         .with_user()
         .await;
@@ -76,7 +89,7 @@ async fn block_traffic_via_arbitrary_header_and_value() {
 
     let req = Request::get("/api/v1/crates/dl_no_ua/0.99.0/download")
         // A request with a header value we want to block isn't allowed
-        .header(header::USER_AGENT, "1")
+        .header(header::USER_AGENT, "2+")
         .header("x-request-id", "abcd")
         .body("")
         .unwrap();
@@ -90,8 +103,51 @@ async fn block_traffic_via_arbitrary_header_and_value() {
         // be a substring match
         .header(
             header::USER_AGENT,
-            "1value-must-match-exactly-this-is-allowed",
+            "1/value-must-match-exactly-this-is-allowed",
         )
+        .body("")
+        .unwrap();
+
+    let resp = anon.run::<()>(req).await;
+    assert_eq!(resp.status(), StatusCode::FOUND);
+
+    let req = Request::get("/api/v1/crates/dl_no_ua/0.99.0/download")
+        // A request with a header value we want to block via regex isn't allowed
+        .header(
+            header::USER_AGENT,
+            "fancy-crate, run by fancy-author v14.105.6234",
+        )
+        .body("")
+        .unwrap();
+
+    let resp = anon.run::<()>(req).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let req = Request::get("/api/v1/crates/dl_no_ua/0.99.0/download")
+        // A request with a header value that has a partial match for the regex we want to block
+        // isn't allowed because we didn't anchor the regex
+        .header(
+            header::USER_AGENT,
+            "fancy-crate, run by fancy-author v1.2.3 oh and other stuff too",
+        )
+        .header("x-request-id", "abcd")
+        .body("")
+        .unwrap();
+    let resp = anon.run::<()>(req).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let req = Request::get("/api/v1/crates/dl_no_ua/0.99.0/download")
+        // A request with a header value that exactly matches an anchored regex isn't allowed
+        .header(header::USER_AGENT, "anchored")
+        .body("")
+        .unwrap();
+
+    let resp = anon.run::<()>(req).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let req = Request::get("/api/v1/crates/dl_no_ua/0.99.0/download")
+        // A request with a header value that doesn't match an anchored regex is allowed
+        .header(header::USER_AGENT, "anchored, it's a pirate's life for me")
         .body("")
         .unwrap();
 
