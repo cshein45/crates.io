@@ -18,6 +18,7 @@ use std::convert::Infallible;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::Duration;
+use tracing::warn;
 
 const DEFAULT_VERSION_ID_CACHE_SIZE: u64 = 10_000;
 const DEFAULT_VERSION_ID_CACHE_TTL: u64 = 5 * 60; // 5 minutes
@@ -280,7 +281,7 @@ fn blocked_traffic() -> Vec<(String, Vec<BlockCriteria>)> {
     parse_traffic_patterns(&pattern_list)
         .map(|(header, value_env_var)| {
             let value_list = dotenvy::var(value_env_var).unwrap_or_default();
-            let values = parse_traffic_pattern_values(&value_list);
+            let values = parse_traffic_pattern_values(header, &value_list);
             (header.into(), values)
         })
         .collect()
@@ -305,10 +306,21 @@ fn parse_traffic_patterns(patterns: &str) -> impl Iterator<Item = (&str, &str)> 
 /// After reading the value of an environment variable whose name was specified in the value of
 /// `BLOCKED_TRAFFIC`, parse a comma-separated list of values to be used as either regex matches or
 /// full string equality with the values of the header name specified in the `BLOCKED_TRAFFIC` pair.
-fn parse_traffic_pattern_values(value_list: &str) -> Vec<BlockCriteria> {
+///
+/// Values that fail to parse are skipped with a warning, so that a single misconfigured entry
+/// does not prevent the remaining values from taking effect.
+fn parse_traffic_pattern_values(header: &str, value_list: &str) -> Vec<BlockCriteria> {
     value_list
         .split(',')
-        .map(|value| value.try_into().unwrap())
+        .filter_map(|value| match value.try_into() {
+            Ok(criteria) => Some(criteria),
+            Err(error) => {
+                warn!(
+                    "Skipping invalid BLOCKED_TRAFFIC value `{value}` for header `{header}`: {error}"
+                );
+                None
+            }
+        })
         .collect()
 }
 
@@ -361,7 +373,7 @@ mod tests {
     fn parse_traffic_pattern_values_splits_on_comma_even_if_escaping_is_attempted() {
         let pattern = "web-tool 1.2.3,fancy-crate\\, run by fancy-author v4.5.6,/.*foo.*/";
 
-        let values = parse_traffic_pattern_values(pattern);
+        let values = parse_traffic_pattern_values("User-Agent", pattern);
         assert_eq!(
             vec![
                 "web-tool 1.2.3",
@@ -369,6 +381,17 @@ mod tests {
                 " run by fancy-author v4.5.6",
                 ".*foo.*",
             ],
+            values.iter().map(|r| r.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn parse_traffic_pattern_values_skips_invalid_regexes() {
+        let pattern = "/valid-regex/,/[invalid-regex/,exact-string";
+
+        let values = parse_traffic_pattern_values("User-Agent", pattern);
+        assert_eq!(
+            vec!["valid-regex", "exact-string"],
             values.iter().map(|r| r.as_str()).collect::<Vec<_>>()
         );
     }
