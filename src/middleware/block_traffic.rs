@@ -159,6 +159,7 @@ pub fn block_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_compact_debug_snapshot;
 
     #[test]
     #[should_panic(expected = "BLOCKED_TRAFFIC values must be a valid regex")]
@@ -168,43 +169,11 @@ mod tests {
 
     #[test]
     fn new_block_criteria_string_vs_regex() {
-        let one_slash = BlockCriteria::new("/");
-        assert!(
-            matches!(one_slash, BlockCriteria::String(_)),
-            "Expected BlockCriteria::String, got {one_slash:?}",
-        );
-
-        let two_slashes_no_content = BlockCriteria::new("//");
-        assert!(
-            matches!(two_slashes_no_content, BlockCriteria::String(_)),
-            "Expected BlockCriteria::String, got {two_slashes_no_content:?}",
-        );
-
-        let starting_slash_only = BlockCriteria::new("/hello i am not regex");
-        assert!(
-            matches!(starting_slash_only, BlockCriteria::String(_)),
-            "Expected BlockCriteria::String, got {starting_slash_only:?}",
-        );
-
-        let ending_slash_only = BlockCriteria::new("hello me neither//");
-        assert!(
-            matches!(ending_slash_only, BlockCriteria::String(_)),
-            "Expected BlockCriteria::String, got {ending_slash_only:?}",
-        );
-
-        let string_doesnt_need_to_be_valid_regex = BlockCriteria::new("+");
-        assert!(
-            matches!(
-                string_doesnt_need_to_be_valid_regex,
-                BlockCriteria::String(_)
-            ),
-            "Expected BlockCriteria::String, got {string_doesnt_need_to_be_valid_regex:?}",
-        );
-
-        let now_thats_what_i_call_regex = BlockCriteria::new("/yes this is regex/");
-        assert!(
-            matches!(now_thats_what_i_call_regex, BlockCriteria::Regex(_)),
-            "Expected BlockCriteria::Regex, got {now_thats_what_i_call_regex:?}",
-        );
+        assert_compact_debug_snapshot!(BlockCriteria::new("/"), @r#"String("/")"#);
+        assert_compact_debug_snapshot!(BlockCriteria::new("//"), @r#"String("//")"#);
+        assert_compact_debug_snapshot!(BlockCriteria::new("/hello i am not regex"), @r#"String("/hello i am not regex")"#);
+        assert_compact_debug_snapshot!(BlockCriteria::new("hello me neither//"), @r#"String("hello me neither//")"#);
+        assert_compact_debug_snapshot!(BlockCriteria::new("+"), @r#"String("+")"#);
+        assert_compact_debug_snapshot!(BlockCriteria::new("/yes this is regex/"), @r#"Regex(Regex("yes this is regex"))"#);
     }
 }
