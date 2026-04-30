@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use secrecy::SecretString;
 
@@ -112,15 +111,12 @@ impl CrateOwnerInvitation {
             return Err(AcceptError::EmailNotVerified { crate_name });
         }
 
-        conn.transaction(|conn| {
-            async move {
-                CrateOwner::from_invite(&self).insert(conn).await?;
+        conn.transaction(async |conn| {
+            CrateOwner::from_invite(&self).insert(conn).await?;
 
-                diesel::delete(&self).execute(conn).await?;
+            diesel::delete(&self).execute(conn).await?;
 
-                Ok(())
-            }
-            .scope_boxed()
+            Ok(())
         })
         .await
     }

@@ -18,7 +18,6 @@ use crates_io_worker::{BackgroundJob, EnqueueError};
 use diesel::dsl::{exists, now, select};
 use diesel::prelude::*;
 use diesel::sql_types::Timestamptz;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use futures_util::TryFutureExt;
 use futures_util::TryStreamExt;
@@ -436,7 +435,7 @@ pub async fn publish(app: AppState, req: Parts, body: Body) -> AppResult<Json<Go
 
     // Create a transaction on the database, if there are no errors,
     // commit the transactions to record a new or updated crate.
-    conn.transaction(|conn| async move {
+    conn.transaction(async |conn| {
         let name = metadata.name;
         let keywords = keywords.iter().map(|s| s.as_str()).collect::<Vec<_>>();
         let categories = categories.iter().map(|s| s.as_str()).collect::<Vec<_>>();
@@ -713,7 +712,7 @@ pub async fn publish(app: AppState, req: Parts, body: Body) -> AppResult<Json<Go
             ),
             warnings,
         }))
-    }.scope_boxed()).await
+    }).await
 }
 
 /// Counts the number of versions for `crate_id` that were published within

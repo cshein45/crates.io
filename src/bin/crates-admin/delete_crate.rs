@@ -13,7 +13,6 @@ use diesel::dsl::{count_star, sql};
 use diesel::expression::SqlLiteral;
 use diesel::prelude::*;
 use diesel::sql_types::{Array, Text};
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use std::fmt::Display;
 
@@ -95,7 +94,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
 
             info!("{name}: Deleting crate from the database…");
             let result = conn
-                .transaction(|conn| delete_from_database(conn, id, deleted_crate).scope_boxed())
+                .transaction(async |conn| delete_from_database(conn, id, deleted_crate).await)
                 .await;
 
             if let Err(error) = result {

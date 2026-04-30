@@ -1,7 +1,6 @@
 use crates_io::{db, schema::version_downloads};
 
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use rand::RngExt;
 
@@ -17,7 +16,7 @@ pub struct Opts {
 
 pub async fn run(opts: Opts) -> anyhow::Result<()> {
     let mut conn = db::oneoff_connection().await?;
-    conn.transaction(|conn| update(opts, conn).scope_boxed())
+    conn.transaction(async |conn| update(opts, conn).await)
         .await?;
     Ok(())
 }

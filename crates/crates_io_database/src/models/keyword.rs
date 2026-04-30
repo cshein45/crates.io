@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
 use crate::models::Crate;
@@ -74,31 +73,28 @@ impl Keyword {
         crate_id: i32,
         keywords: &[&str],
     ) -> QueryResult<()> {
-        conn.transaction(|conn| {
-            async move {
-                let keywords = Keyword::find_or_create_all(conn, keywords).await?;
+        conn.transaction(async |conn| {
+            let keywords = Keyword::find_or_create_all(conn, keywords).await?;
 
-                diesel::delete(crates_keywords::table)
-                    .filter(crates_keywords::crate_id.eq(crate_id))
-                    .execute(conn)
-                    .await?;
+            diesel::delete(crates_keywords::table)
+                .filter(crates_keywords::crate_id.eq(crate_id))
+                .execute(conn)
+                .await?;
 
-                let crate_keywords = keywords
-                    .into_iter()
-                    .map(|kw| CrateKeyword {
-                        crate_id,
-                        keyword_id: kw.id,
-                    })
-                    .collect::<Vec<_>>();
+            let crate_keywords = keywords
+                .into_iter()
+                .map(|kw| CrateKeyword {
+                    crate_id,
+                    keyword_id: kw.id,
+                })
+                .collect::<Vec<_>>();
 
-                diesel::insert_into(crates_keywords::table)
-                    .values(&crate_keywords)
-                    .execute(conn)
-                    .await?;
+            diesel::insert_into(crates_keywords::table)
+                .values(&crate_keywords)
+                .execute(conn)
+                .await?;
 
-                Ok(())
-            }
-            .scope_boxed()
+            Ok(())
         })
         .await
     }

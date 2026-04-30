@@ -5,7 +5,6 @@ use anyhow::{Context, Result};
 use crates_io_database::schema::categories;
 use diesel::pg::upsert::excluded;
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
 #[derive(Debug)]
@@ -102,28 +101,25 @@ pub async fn sync_with_connection(toml_str: &str, conn: &mut AsyncPgConnection) 
         })
         .collect::<Vec<_>>();
 
-    conn.transaction(|conn| {
-        async move {
-            let slugs: Vec<String> = diesel::insert_into(categories::table)
-                .values(&to_insert)
-                .on_conflict(categories::slug)
-                .do_update()
-                .set((
-                    categories::category.eq(excluded(categories::category)),
-                    categories::description.eq(excluded(categories::description)),
-                ))
-                .returning(categories::slug)
-                .get_results(conn)
-                .await?;
+    conn.transaction(async |conn| {
+        let slugs: Vec<String> = diesel::insert_into(categories::table)
+            .values(&to_insert)
+            .on_conflict(categories::slug)
+            .do_update()
+            .set((
+                categories::category.eq(excluded(categories::category)),
+                categories::description.eq(excluded(categories::description)),
+            ))
+            .returning(categories::slug)
+            .get_results(conn)
+            .await?;
 
-            diesel::delete(categories::table)
-                .filter(categories::slug.ne_all(slugs))
-                .execute(conn)
-                .await?;
+        diesel::delete(categories::table)
+            .filter(categories::slug.ne_all(slugs))
+            .execute(conn)
+            .await?;
 
-            Ok(())
-        }
-        .scope_boxed()
+        Ok(())
     })
     .await
 }

@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use diesel::dsl;
 use diesel::prelude::*;
 use diesel::sql_types::Text;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
 #[derive(Clone, Identifiable, HasQuery, QueryableByName, Debug)]
@@ -49,40 +48,37 @@ impl Category {
         crate_id: i32,
         slugs: &[&str],
     ) -> QueryResult<Vec<String>> {
-        conn.transaction(|conn| {
-            async move {
-                let categories: Vec<Category> = Category::query()
-                    .filter(categories::slug.eq_any(slugs))
-                    .load(conn)
-                    .await?;
+        conn.transaction(async |conn| {
+            let categories: Vec<Category> = Category::query()
+                .filter(categories::slug.eq_any(slugs))
+                .load(conn)
+                .await?;
 
-                let invalid_categories = slugs
-                    .iter()
-                    .filter(|s| !categories.iter().any(|c| c.slug == **s))
-                    .map(ToString::to_string)
-                    .collect();
+            let invalid_categories = slugs
+                .iter()
+                .filter(|s| !categories.iter().any(|c| c.slug == **s))
+                .map(ToString::to_string)
+                .collect();
 
-                let crate_categories = categories
-                    .iter()
-                    .map(|c| CrateCategory {
-                        category_id: c.id,
-                        crate_id,
-                    })
-                    .collect::<Vec<_>>();
+            let crate_categories = categories
+                .iter()
+                .map(|c| CrateCategory {
+                    category_id: c.id,
+                    crate_id,
+                })
+                .collect::<Vec<_>>();
 
-                diesel::delete(crates_categories::table)
-                    .filter(crates_categories::crate_id.eq(crate_id))
-                    .execute(conn)
-                    .await?;
+            diesel::delete(crates_categories::table)
+                .filter(crates_categories::crate_id.eq(crate_id))
+                .execute(conn)
+                .await?;
 
-                diesel::insert_into(crates_categories::table)
-                    .values(&crate_categories)
-                    .execute(conn)
-                    .await?;
+            diesel::insert_into(crates_categories::table)
+                .values(&crate_categories)
+                .execute(conn)
+                .await?;
 
-                Ok(invalid_categories)
-            }
-            .scope_boxed()
+            Ok(invalid_categories)
         })
         .await
     }

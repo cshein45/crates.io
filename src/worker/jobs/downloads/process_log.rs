@@ -8,7 +8,6 @@ use diesel::dsl::exists;
 use diesel::prelude::*;
 use diesel::{QueryResult, select};
 use diesel_async::pooled_connection::deadpool::Pool;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -124,23 +123,20 @@ async fn run(
 
     let path = path.to_string();
     let mut conn = db_pool.get().await?;
-    conn.transaction(|conn| {
-        async move {
-            // Mark the log file as processed before saving the downloads to
-            // the database.
-            //
-            // If a second job is already processing the same log file, this
-            // call will block until the second job has finished its
-            // transaction and marked the log file as processed. Afterward
-            // this call will throw a uniqueness error and fail the job.
-            // When the job is retried the `already_processed()` call above
-            // will return `true` and the job will skip processing the log
-            // file again.
-            save_as_processed(path, conn).await?;
+    conn.transaction(async |conn| {
+        // Mark the log file as processed before saving the downloads to
+        // the database.
+        //
+        // If a second job is already processing the same log file, this
+        // call will block until the second job has finished its
+        // transaction and marked the log file as processed. Afterward
+        // this call will throw a uniqueness error and fail the job.
+        // When the job is retried the `already_processed()` call above
+        // will return `true` and the job will skip processing the log
+        // file again.
+        save_as_processed(path, conn).await?;
 
-            save_downloads(downloads, conn).await
-        }
-        .scope_boxed()
+        save_downloads(downloads, conn).await
     })
     .await?;
 

@@ -17,7 +17,6 @@ use axum::Json;
 use chrono::Utc;
 use crates_io_github::{GitHubClient, GitHubError};
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use http::StatusCode;
 use http::request::Parts;
@@ -196,114 +195,112 @@ async fn modify_owners(
     let user = auth.user();
 
     let (msg, emails) = conn
-        .transaction(|conn| {
-            let app = app.clone();
-            async move {
-                let krate: Crate = Crate::by_name(&crate_name)
-                    .first(conn)
-                    .await
-                    .optional()?
-                    .ok_or_else(|| crate_not_found(&crate_name))?;
+        .transaction(async |conn| {
+            let krate: Crate = Crate::by_name(&crate_name)
+                .first(conn)
+                .await
+                .optional()?
+                .ok_or_else(|| crate_not_found(&crate_name))?;
 
-                let owners = krate.owners(conn).await?;
+            let owners = krate.owners(conn).await?;
 
-                match Rights::get(user, &*app.github, &owners, &app.config.gh_token_encryption).await? {
-                    Rights::Full => {}
-                    // Yes!
-                    Rights::Publish => {
-                        return Err(custom(
-                            StatusCode::FORBIDDEN,
-                            "team members don't have permission to modify owners",
-                        ));
-                    }
-                    Rights::None => {
-                        return Err(custom(
-                            StatusCode::FORBIDDEN,
-                            "only owners have permission to modify owners",
-                        ));
-                    }
+            match Rights::get(user, &*app.github, &owners, &app.config.gh_token_encryption).await? {
+                Rights::Full => {}
+                // Yes!
+                Rights::Publish => {
+                    return Err(custom(
+                        StatusCode::FORBIDDEN,
+                        "team members don't have permission to modify owners",
+                    ));
                 }
+                Rights::None => {
+                    return Err(custom(
+                        StatusCode::FORBIDDEN,
+                        "only owners have permission to modify owners",
+                    ));
+                }
+            }
 
-                // The set of emails to send out after invite processing is complete and
-                // the database transaction has committed.
-                let mut emails = Vec::with_capacity(logins.len());
+            // The set of emails to send out after invite processing is complete and
+            // the database transaction has committed.
+            let mut emails = Vec::with_capacity(logins.len());
 
-                let comma_sep_msg = if add {
-                    let mut msgs = Vec::with_capacity(logins.len());
-                    for login in &logins {
-                        let login_test =
-                            |owner: &Owner| owner.login().to_lowercase() == *login.to_lowercase();
-                        if owners.iter().any(login_test) {
-                            return Err(bad_request(format_args!("`{login}` is already an owner")));
-                        }
+            let comma_sep_msg = if add {
+                let mut msgs = Vec::with_capacity(logins.len());
+                for login in &logins {
+                    let login_test =
+                        |owner: &Owner| owner.login().to_lowercase() == *login.to_lowercase();
+                    if owners.iter().any(login_test) {
+                        return Err(bad_request(format_args!("`{login}` is already an owner")));
+                    }
 
-                        match add_owner(&app, conn, user, &krate, login).await {
-                            // A user was successfully invited, and they must accept
-                            // the invite, and a best-effort attempt should be made
-                            // to email them the invite token for one-click
-                            // acceptance.
-                            Ok(NewOwnerInvite::User(invitee, token)) => {
-                                msgs.push(format!(
-                                    "user {} has been invited to be an owner of crate {}",
-                                    invitee.gh_login, krate.name,
-                                ));
+                    match add_owner(&app, conn, user, &krate, login).await {
+                        // A user was successfully invited, and they must accept
+                        // the invite, and a best-effort attempt should be made
+                        // to email them the invite token for one-click
+                        // acceptance.
+                        Ok(NewOwnerInvite::User(invitee, token)) => {
+                            msgs.push(format!(
+                                "user {} has been invited to be an owner of crate {}",
+                                invitee.gh_login, krate.name,
+                            ));
 
-                                if let Some(recipient) =
-                                    invitee.verified_email(conn).await.ok().flatten()
-                                {
-                                    let email = EmailMessage::from_template(
-                                        "owner_invite",
-                                        context! {
-                                            inviter => user.gh_login,
-                                            domain => app.emails.domain,
-                                            crate_name => krate.name,
-                                            token => token.expose_secret()
-                                        },
-                                    );
+                            if let Some(recipient) =
+                                invitee.verified_email(conn).await.ok().flatten()
+                            {
+                                let email = EmailMessage::from_template(
+                                    "owner_invite",
+                                    context! {
+                                        inviter => user.gh_login,
+                                        domain => app.emails.domain,
+                                        crate_name => krate.name,
+                                        token => token.expose_secret()
+                                    },
+                                );
 
-                                    match email {
-                                        Ok(email_msg) => emails.push((recipient, email_msg)),
-                                        Err(error) => warn!("Failed to render owner invite email template: {error}"),
-                                    }
+                                match email {
+                                    Ok(email_msg) => emails.push((recipient, email_msg)),
+                                    Err(error) => warn!(
+                                        "Failed to render owner invite email template: {error}"
+                                    ),
                                 }
                             }
+                        }
 
-                            // A team was successfully invited. They are immediately
-                            // added, and do not have an invite token.
-                            Ok(NewOwnerInvite::Team(team)) => msgs.push(format!(
-                                "team {} has been added as an owner of crate {}",
-                                team.login, krate.name
-                            )),
+                        // A team was successfully invited. They are immediately
+                        // added, and do not have an invite token.
+                        Ok(NewOwnerInvite::Team(team)) => msgs.push(format!(
+                            "team {} has been added as an owner of crate {}",
+                            team.login, krate.name
+                        )),
 
-                            // This user has a pending invite.
-                            Err(OwnerAddError::AlreadyInvited(user)) => msgs.push(format!(
+                        // This user has a pending invite.
+                        Err(OwnerAddError::AlreadyInvited(user)) => msgs.push(format!(
                             "user {} already has a pending invitation to be an owner of crate {}",
                             user.gh_login, krate.name
                         )),
 
-                            // An opaque error occurred.
-                            Err(OwnerAddError::Diesel(e)) => return Err(e.into()),
-                            Err(OwnerAddError::AppError(e)) => return Err(e),
-                        }
+                        // An opaque error occurred.
+                        Err(OwnerAddError::Diesel(e)) => return Err(e.into()),
+                        Err(OwnerAddError::AppError(e)) => return Err(e),
                     }
-                    msgs.join(",")
-                } else {
-                    for login in &logins {
-                        krate.owner_remove(conn, login).await?;
-                    }
-                    if User::owning(&krate, conn).await?.is_empty() {
-                        return Err(bad_request(
-                            "cannot remove all individual owners of a crate. \
+                }
+                msgs.join(",")
+            } else {
+                for login in &logins {
+                    krate.owner_remove(conn, login).await?;
+                }
+                if User::owning(&krate, conn).await?.is_empty() {
+                    return Err(bad_request(
+                        "cannot remove all individual owners of a crate. \
                      Team member don't have permission to modify owners, so \
                      at least one individual owner is required.",
-                        ));
-                    }
-                    "owners successfully removed".to_owned()
-                };
+                    ));
+                }
+                "owners successfully removed".to_owned()
+            };
 
-                Ok((comma_sep_msg, emails))
-            }
-            .scope_boxed()
+            Ok((comma_sep_msg, emails))
         })
         .await?;
 

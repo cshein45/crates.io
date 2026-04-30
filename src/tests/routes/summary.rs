@@ -6,7 +6,6 @@ use crates_io::schema::metadata;
 use crates_io::views::{EncodableCategory, EncodableCrate, EncodableKeyword};
 use crates_io_database::schema::categories;
 use diesel::{ExpressionMethods, insert_into, update};
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use serde::Deserialize;
 
@@ -34,74 +33,71 @@ async fn summary_new_crates() {
     let mut conn = app.db_conn().await;
     let user = user.as_model();
 
-    conn.transaction(|conn| {
-        async move {
-            let now_ = Utc::now();
-            let now_plus_two = now_ + chrono::Duration::seconds(2);
+    conn.transaction(async |conn| {
+        let now_ = Utc::now();
+        let now_plus_two = now_ + chrono::Duration::seconds(2);
 
-            insert_into(categories::table)
-                .values(new_category("Category 1", "cat1", "Category 1 crates"))
-                .execute(conn)
-                .await
-                .unwrap();
+        insert_into(categories::table)
+            .values(new_category("Category 1", "cat1", "Category 1 crates"))
+            .execute(conn)
+            .await
+            .unwrap();
 
-            CrateBuilder::new("some_downloads", user.id)
-                .version(VersionBuilder::new("0.1.0"))
-                .description("description")
-                .keyword("popular")
-                .category("cat1")
-                .downloads(20)
-                .recent_downloads(10)
-                .expect_build(conn)
-                .await;
+        CrateBuilder::new("some_downloads", user.id)
+            .version(VersionBuilder::new("0.1.0"))
+            .description("description")
+            .keyword("popular")
+            .category("cat1")
+            .downloads(20)
+            .recent_downloads(10)
+            .expect_build(conn)
+            .await;
 
-            CrateBuilder::new("most_recent_downloads", user.id)
-                .version(VersionBuilder::new("0.2.0"))
-                .version(VersionBuilder::new("0.2.1").yanked(true))
-                .keyword("popular")
-                .category("cat1")
-                .downloads(5000)
-                .recent_downloads(50)
-                .expect_build(conn)
-                .await;
+        CrateBuilder::new("most_recent_downloads", user.id)
+            .version(VersionBuilder::new("0.2.0"))
+            .version(VersionBuilder::new("0.2.1").yanked(true))
+            .keyword("popular")
+            .category("cat1")
+            .downloads(5000)
+            .recent_downloads(50)
+            .expect_build(conn)
+            .await;
 
-            CrateBuilder::new("just_updated", user.id)
-                .version(VersionBuilder::new("0.1.0"))
-                .version(VersionBuilder::new("0.1.1").yanked(true))
-                .version(VersionBuilder::new("0.1.2"))
-                // update 'just_updated' krate. Others won't appear because updated_at == created_at.
-                .updated_at(now_)
-                .expect_build(conn)
-                .await;
+        CrateBuilder::new("just_updated", user.id)
+            .version(VersionBuilder::new("0.1.0"))
+            .version(VersionBuilder::new("0.1.1").yanked(true))
+            .version(VersionBuilder::new("0.1.2"))
+            // update 'just_updated' krate. Others won't appear because updated_at == created_at.
+            .updated_at(now_)
+            .expect_build(conn)
+            .await;
 
-            CrateBuilder::new("just_updated_patch", user.id)
-                .version(VersionBuilder::new("0.1.0"))
-                .version(VersionBuilder::new("0.2.0"))
-                .version(VersionBuilder::new("0.2.1").yanked(true))
-                // Add a patch version be newer than the other versions, including the higher one.
-                .version(VersionBuilder::new("0.1.1").created_at(now_plus_two))
-                .updated_at(now_plus_two)
-                .expect_build(conn)
-                .await;
+        CrateBuilder::new("just_updated_patch", user.id)
+            .version(VersionBuilder::new("0.1.0"))
+            .version(VersionBuilder::new("0.2.0"))
+            .version(VersionBuilder::new("0.2.1").yanked(true))
+            // Add a patch version be newer than the other versions, including the higher one.
+            .version(VersionBuilder::new("0.1.1").created_at(now_plus_two))
+            .updated_at(now_plus_two)
+            .expect_build(conn)
+            .await;
 
-            CrateBuilder::new("with_downloads", user.id)
-                .version(VersionBuilder::new("0.3.0"))
-                .version(VersionBuilder::new("0.3.1").yanked(true))
-                .keyword("popular")
-                .downloads(1000)
-                .expect_build(conn)
-                .await;
+        CrateBuilder::new("with_downloads", user.id)
+            .version(VersionBuilder::new("0.3.0"))
+            .version(VersionBuilder::new("0.3.1").yanked(true))
+            .keyword("popular")
+            .downloads(1000)
+            .expect_build(conn)
+            .await;
 
-            // set total_downloads global value for `num_downloads` prop
-            update(metadata::table)
-                .set(metadata::total_downloads.eq(6000))
-                .execute(conn)
-                .await
-                .unwrap();
+        // set total_downloads global value for `num_downloads` prop
+        update(metadata::table)
+            .set(metadata::total_downloads.eq(6000))
+            .execute(conn)
+            .await
+            .unwrap();
 
-            Ok::<_, anyhow::Error>(())
-        }
-        .scope_boxed()
+        Ok::<_, anyhow::Error>(())
     })
     .await
     .unwrap();
