@@ -11,7 +11,6 @@ use crate::views::EncodableCrate;
 use anyhow::Context;
 use axum::{Extension, Json};
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use http::{StatusCode, request::Parts};
 use serde::{Deserialize, Serialize};
@@ -74,8 +73,8 @@ pub async fn update_crate(
     auth.reject_legacy_tokens()?;
 
     // Update crate settings in a transaction
-    conn.transaction(|conn| {
-        update_inner(conn, &app, &krate, auth.user(), &real_ip, body).scope_boxed()
+    conn.transaction(async |conn| {
+        update_inner(conn, &app, &krate, auth.user(), &real_ip, body).await
     })
     .await
 }

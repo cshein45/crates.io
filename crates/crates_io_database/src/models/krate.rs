@@ -9,7 +9,6 @@ use diesel::dsl;
 use diesel::pg::Pg;
 use diesel::prelude::*;
 use diesel::sql_types::{Bool, Integer, Text};
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use secrecy::SecretString;
 use serde::Serialize;
@@ -109,26 +108,23 @@ impl NewCrate<'_> {
     }
 
     pub async fn create(&self, conn: &mut AsyncPgConnection, user_id: i32) -> QueryResult<Crate> {
-        conn.transaction(|conn| {
-            async move {
-                let krate: Crate = diesel::insert_into(crates::table)
-                    .values(self)
-                    .on_conflict_do_nothing()
-                    .returning(Crate::as_returning())
-                    .get_result(conn)
-                    .await?;
+        conn.transaction(async |conn| {
+            let krate: Crate = diesel::insert_into(crates::table)
+                .values(self)
+                .on_conflict_do_nothing()
+                .returning(Crate::as_returning())
+                .get_result(conn)
+                .await?;
 
-                CrateOwner::builder()
-                    .crate_id(krate.id)
-                    .user_id(user_id)
-                    .created_by(user_id)
-                    .build()
-                    .insert(conn)
-                    .await?;
+            CrateOwner::builder()
+                .crate_id(krate.id)
+                .user_id(user_id)
+                .created_by(user_id)
+                .build()
+                .insert(conn)
+                .await?;
 
-                Ok(krate)
-            }
-            .scope_boxed()
+            Ok(krate)
         })
         .await
     }

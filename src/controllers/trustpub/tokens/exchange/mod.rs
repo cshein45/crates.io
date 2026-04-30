@@ -95,7 +95,7 @@ async fn handle_github_token(
 
     let mut conn = state.db_write().await?;
 
-    conn.transaction(|conn| Box::pin(handle_github_token_inner(conn, signed_claims)))
+    conn.transaction(async |conn| handle_github_token_inner(conn, signed_claims).await)
         .await
 }
 
@@ -246,7 +246,7 @@ async fn handle_gitlab_token(
 
     let mut conn = state.db_write().await?;
 
-    conn.transaction(|conn| Box::pin(handle_gitlab_token_inner(conn, signed_claims)))
+    conn.transaction(async |conn| handle_gitlab_token_inner(conn, signed_claims).await)
         .await
 }
 

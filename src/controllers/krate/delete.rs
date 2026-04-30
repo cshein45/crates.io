@@ -14,7 +14,6 @@ use chrono::{TimeDelta, Utc};
 use crates_io_database::schema::deleted_crates;
 use crates_io_worker::BackgroundJob;
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use http::StatusCode;
 use http::request::Parts;
@@ -110,41 +109,38 @@ pub async fn delete_crate(
     }
 
     let crate_name = krate.name.clone();
-    conn.transaction(|conn| {
-        async move {
-            diesel::delete(crates::table.find(krate.id))
-                .execute(conn)
-                .await?;
+    conn.transaction(async |conn| {
+        diesel::delete(crates::table.find(krate.id))
+            .execute(conn)
+            .await?;
 
-            let deleted_at = Utc::now();
-            let available_at = deleted_at + AVAILABLE_AFTER;
+        let deleted_at = Utc::now();
+        let available_at = deleted_at + AVAILABLE_AFTER;
 
-            let deleted_crate = NewDeletedCrate::builder(&krate.name)
-                .created_at(&created_at)
-                .deleted_at(&deleted_at)
-                .deleted_by(user.id)
-                .available_at(&available_at)
-                .maybe_message(params.message())
-                .build();
+        let deleted_crate = NewDeletedCrate::builder(&krate.name)
+            .created_at(&created_at)
+            .deleted_at(&deleted_at)
+            .deleted_by(user.id)
+            .available_at(&available_at)
+            .maybe_message(params.message())
+            .build();
 
-            diesel::insert_into(deleted_crates::table)
-                .values(deleted_crate)
-                .execute(conn)
-                .await?;
+        diesel::insert_into(deleted_crates::table)
+            .values(deleted_crate)
+            .execute(conn)
+            .await?;
 
-            let git_index_job = jobs::SyncToGitIndex::new(&krate.name);
-            let sparse_index_job = jobs::SyncToSparseIndex::new(&krate.name);
-            let delete_from_storage_job = jobs::DeleteCrateFromStorage::new(path.name);
+        let git_index_job = jobs::SyncToGitIndex::new(&krate.name);
+        let sparse_index_job = jobs::SyncToSparseIndex::new(&krate.name);
+        let delete_from_storage_job = jobs::DeleteCrateFromStorage::new(path.name);
 
-            tokio::try_join!(
-                git_index_job.enqueue(&*conn),
-                sparse_index_job.enqueue(&*conn),
-                delete_from_storage_job.enqueue(&*conn),
-            )?;
+        tokio::try_join!(
+            git_index_job.enqueue(&*conn),
+            sparse_index_job.enqueue(&*conn),
+            delete_from_storage_job.enqueue(&*conn),
+        )?;
 
-            Ok::<_, BoxedAppError>(())
-        }
-        .scope_boxed()
+        Ok::<_, BoxedAppError>(())
     })
     .await?;
 

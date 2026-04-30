@@ -9,7 +9,6 @@ use axum::extract::Path;
 use crates_io_database::schema::emails;
 use diesel::dsl::sql;
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use http::request::Parts;
 use minijinja::context;
@@ -70,33 +69,30 @@ pub async fn resend_email_verification(
         return Err(bad_request("current user does not match requested user"));
     }
 
-    conn.transaction(|conn| {
-        async move {
-            let email: Email = diesel::update(Email::belonging_to(auth.user()))
-                .set(emails::token.eq(sql("DEFAULT")))
-                .returning(Email::as_returning())
-                .get_result(conn)
-                .await
-                .optional()?
-                .ok_or_else(|| bad_request("Email could not be found"))?;
+    conn.transaction(async |conn| {
+        let email: Email = diesel::update(Email::belonging_to(auth.user()))
+            .set(emails::token.eq(sql("DEFAULT")))
+            .returning(Email::as_returning())
+            .get_result(conn)
+            .await
+            .optional()?
+            .ok_or_else(|| bad_request("Email could not be found"))?;
 
-            let email_message = EmailMessage::from_template(
-                "user_confirm",
-                context! {
-                    user_name => auth.user().gh_login,
-                    domain => state.emails.domain,
-                    token => email.token.expose_secret()
-                },
-            )
-            .map_err(|_| bad_request("Failed to render email template"))?;
+        let email_message = EmailMessage::from_template(
+            "user_confirm",
+            context! {
+                user_name => auth.user().gh_login,
+                domain => state.emails.domain,
+                token => email.token.expose_secret()
+            },
+        )
+        .map_err(|_| bad_request("Failed to render email template"))?;
 
-            state
-                .emails
-                .send(&email.email, email_message)
-                .await
-                .map_err(BoxedAppError::from)
-        }
-        .scope_boxed()
+        state
+            .emails
+            .send(&email.email, email_message)
+            .await
+            .map_err(BoxedAppError::from)
     })
     .await?;
 

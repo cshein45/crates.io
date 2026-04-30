@@ -7,7 +7,6 @@ use crates_io::worker::jobs;
 use crates_io::{db, schema::versions};
 use crates_io_worker::BackgroundJob;
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, RunQueryDsl};
 
 #[derive(clap::Parser, Debug)]
@@ -59,7 +58,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
         }
     }
 
-    let opts = conn.transaction(|conn| async move {
+    let opts = conn.transaction(async |conn| {
         let crate_name = &opts.crate_name;
 
         info!(%crate_name, %crate_id, versions = ?opts.versions, "Deleting versions from the database");
@@ -90,7 +89,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
         }
 
         Ok::<_, anyhow::Error>(opts)
-    }.scope_boxed()).await?;
+    }).await?;
 
     let crate_name = &opts.crate_name;
 

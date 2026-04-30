@@ -5,7 +5,6 @@ use crates_io::schema::versions;
 use crates_io::worker::jobs::{SyncToGitIndex, SyncToSparseIndex, UpdateDefaultVersion};
 use crates_io_worker::BackgroundJob;
 use diesel::prelude::*;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
 #[derive(clap::Parser, Debug)]
@@ -26,7 +25,7 @@ pub struct Opts {
 pub async fn run(opts: Opts) -> anyhow::Result<()> {
     let mut conn = db::oneoff_connection().await?;
 
-    conn.transaction(|conn| yank(opts, conn).scope_boxed())
+    conn.transaction(async |conn| yank(opts, conn).await)
         .await?;
 
     Ok(())

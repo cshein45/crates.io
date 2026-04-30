@@ -4,7 +4,6 @@ use crate::util::{try_to_extract_panic_info, with_sentry_transaction};
 use anyhow::anyhow;
 use diesel::prelude::*;
 use diesel_async::pooled_connection::deadpool::Pool;
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, AsyncPgConnection};
 use futures_util::FutureExt;
 use std::panic::AssertUnwindSafe;
@@ -58,50 +57,47 @@ impl<Context: Clone + Send + Sync + 'static> Worker<Context> {
         let mut conn = self.connection_pool.get().await?;
 
         let job_types = job_registry.job_types();
-        conn.transaction(|conn| {
-            async move {
-                debug!("Looking for next background worker job…");
-                let Some(job) = storage::find_next_unlocked_job(conn, &job_types)
+        conn.transaction(async |conn| {
+            debug!("Looking for next background worker job…");
+            let Some(job) = storage::find_next_unlocked_job(conn, &job_types)
+                .await
+                .optional()?
+            else {
+                return Ok(None);
+            };
+
+            let span = info_span!("job", job.id = %job.id, job.typ = %job.job_type);
+
+            let job_id = job.id;
+            debug!("Running job…");
+
+            let future = with_sentry_transaction(&job.job_type, async || {
+                let run_task_fn = job_registry
+                    .get(&job.job_type)
+                    .ok_or_else(|| anyhow!("Unknown job type {}", job.job_type))?;
+
+                AssertUnwindSafe(run_task_fn(context, job.data))
+                    .catch_unwind()
                     .await
-                    .optional()?
-                else {
-                    return Ok(None);
-                };
+                    .map_err(|e| try_to_extract_panic_info(&e))
+                    .flatten()
+            });
 
-                let span = info_span!("job", job.id = %job.id, job.typ = %job.job_type);
+            let result = future.instrument(span.clone()).await;
 
-                let job_id = job.id;
-                debug!("Running job…");
-
-                let future = with_sentry_transaction(&job.job_type, async || {
-                    let run_task_fn = job_registry
-                        .get(&job.job_type)
-                        .ok_or_else(|| anyhow!("Unknown job type {}", job.job_type))?;
-
-                    AssertUnwindSafe(run_task_fn(context, job.data))
-                        .catch_unwind()
-                        .await
-                        .map_err(|e| try_to_extract_panic_info(&e))
-                        .flatten()
-                });
-
-                let result = future.instrument(span.clone()).await;
-
-                let _enter = span.enter();
-                match result {
-                    Ok(_) => {
-                        debug!("Deleting successful job…");
-                        storage::delete_successful_job(conn, job_id).await?
-                    }
-                    Err(error) => {
-                        warn!("Failed to run job: {error}");
-                        storage::update_failed_job(conn, job_id).await;
-                    }
+            let _enter = span.enter();
+            match result {
+                Ok(_) => {
+                    debug!("Deleting successful job…");
+                    storage::delete_successful_job(conn, job_id).await?
                 }
-
-                Ok(Some(job_id))
+                Err(error) => {
+                    warn!("Failed to run job: {error}");
+                    storage::update_failed_job(conn, job_id).await;
+                }
             }
-            .scope_boxed()
+
+            Ok(Some(job_id))
         })
         .await
     }
