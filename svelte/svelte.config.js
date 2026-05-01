@@ -44,7 +44,13 @@ const config = {
           'https://static.crates.io',
           'https://static.staging.crates.io',
         ],
-        'script-src': ['self', 'unsafe-eval'],
+        'script-src': [
+          'self',
+          'unsafe-eval',
+          // Hash of the inline `window.onerror` bootstrap script in `app.html`.
+          // If the script content changes, regenerate this hash.
+          'sha256-n1+BB7Ckjcal1Pr7QNBh/dKRTtBQsIytFodRiIosXdE=',
+        ],
         // Fira Sans is loaded from the Mozilla CDN via `@import` in `global.css`
         'style-src': ['self', 'unsafe-inline', 'https://code.cdn.mozilla.net'],
         'font-src': ['https://code.cdn.mozilla.net'],

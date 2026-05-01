@@ -1,4 +1,8 @@
 export async function init() {
+  // Clear the bootstrap `window.onerror` handler set in `app.html`; the app
+  // has loaded successfully, so the load-failure fallback is no longer needed.
+  window.onerror = null;
+
   if (import.meta.env.VITE_MSW_ENABLED) {
     let { http, passthrough } = await import('msw');
     let { setupWorker } = await import('msw/browser');
