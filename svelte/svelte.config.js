@@ -18,10 +18,6 @@ const config = {
       precompress: true,
     }),
     paths: {
-      // We are serving the app from the `/svelte` subdirectory for now
-      // to be able to serve it alongside the Ember.js app at `/`.
-      // Use empty base path for tests (Vitest unit tests and Playwright e2e tests).
-      base: process.env.VITEST || process.env.PLAYWRIGHT ? '' : '/svelte',
       // Force absolute asset URLs under Playwright so that Percy's DOM
       // serializer captures hrefs that still resolve when the snapshot is
       // rendered at a different URL.
