@@ -1,7 +1,7 @@
 //! Serve the frontend HTML.
 //!
 //! Paths intended for the inner `api_handler` are passed along to the remaining middleware layers
-//! as normal. Requests not intended for the backend will be served HTML to boot the Ember.js
+//! as normal. Requests not intended for the backend will be served HTML to boot the SvelteKit
 //! frontend.
 //!
 //! For now, there is an additional check to see if the `Accept` header contains "html". This is
@@ -23,56 +23,31 @@ use crate::app::AppState;
 
 const OG_IMAGE_FALLBACK_URL: &str = "https://crates.io/assets/og-image.png";
 const PATH_PREFIX_CRATES: &str = "/crates/";
-/// Temporary: until the Svelte app replaces the Ember app at `/`, it is
-/// served at `/svelte/`. This constant can be removed once the migration is
-/// complete.
-const PATH_PREFIX_SVELTE_CRATES: &str = "/svelte/crates/";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum FrontendApp {
-    Ember,
-    Svelte,
-}
-
-impl FrontendApp {
-    fn from_path(path: &str) -> Self {
-        if path.starts_with("/svelte/") {
-            FrontendApp::Svelte
-        } else {
-            FrontendApp::Ember
-        }
-    }
-
-    fn index_template_name(&self) -> &'static str {
-        match self {
-            FrontendApp::Ember => "index_html",
-            FrontendApp::Svelte => "svelte_index_html",
-        }
-    }
-}
+const TEMPLATE_NAME: &str = "index";
+const TEMPLATE_PATH: &str = "svelte/build/200.html";
 
 /// The [`Shared`] allows for multiple tasks to wait on a single future, [`BoxFuture`] allows
 /// us to name the type in the declaration of static variables, and the [`Arc`] ensures
 /// the [`minijinja::Environment`] doesn't get cloned each request.
 type TemplateEnvFut = Shared<BoxFuture<'static, Arc<minijinja::Environment<'static>>>>;
-type TemplateCache = moka::future::Cache<(Cow<'static, str>, FrontendApp), String>;
+type TemplateCache = moka::future::Cache<Cow<'static, str>, String>;
 
-/// Initialize [`minijinja::Environment`] given the index.html file at `dist/index.html`.
-/// This should only be done once as it will load said file from persistent storage.
+/// Initialize [`minijinja::Environment`] given the SvelteKit fallback
+/// document at [`TEMPLATE_PATH`]. This should only be done once as it will
+/// load said file from persistent storage.
 async fn init_template_env() -> Arc<minijinja::Environment<'static>> {
     let mut env = minijinja::Environment::empty();
 
-    let template_j2 = tokio::fs::read_to_string("dist/index.html")
+    let template = tokio::fs::read_to_string(TEMPLATE_PATH)
         .await
-        .expect("Error loading dist/index.html template. Is the frontend package built yet?");
+        .unwrap_or_else(|err| {
+            panic!(
+                "Error loading {TEMPLATE_PATH} template: {err}. Is the Svelte frontend built yet?"
+            )
+        });
 
-    env.add_template_owned(FrontendApp::Ember.index_template_name(), template_j2)
+    env.add_template_owned(TEMPLATE_NAME, template)
         .expect("Error loading template");
-
-    if let Ok(svelte_template) = tokio::fs::read_to_string("svelte/build/200.html").await {
-        env.add_template_owned(FrontendApp::Svelte.index_template_name(), svelte_template)
-            .expect("Error loading Svelte template");
-    }
 
     Arc::new(env)
 }
@@ -116,10 +91,8 @@ pub async fn serve(state: AppState, request: Request, next: Next) -> Response {
         let html_cache = RENDERED_HTML_CACHE
             .get_or_init(|| init_html_cache(state.config.html_render_cache_max_capacity));
 
-        let frontend_app = FrontendApp::from_path(path);
-
         let render_result = html_cache
-            .entry_by_ref(&(og_image_url.clone(), frontend_app))
+            .entry_by_ref(&og_image_url)
             .or_try_insert_with::<_, minijinja::Error>(async {
                 // `LazyLock::deref` blocks as long as its initializer is running in another thread.
                 // Note that this won't take long, as the constructed Futures are not awaited
@@ -129,7 +102,7 @@ pub async fn serve(state: AppState, request: Request, next: Next) -> Response {
                 // Render the HTML given the OG image URL
                 let env = template_env.clone().await;
                 let html = env
-                    .get_template(frontend_app.index_template_name())?
+                    .get_template(TEMPLATE_NAME)?
                     .render(minijinja::context! { og_image_url})?;
 
                 Ok(html)
@@ -138,7 +111,7 @@ pub async fn serve(state: AppState, request: Request, next: Next) -> Response {
 
         match render_result {
             Ok(entry) => {
-                // Serve static Ember page to bootstrap the frontend
+                // Serve the static page to bootstrap the frontend
                 axum::response::Html(entry.into_value()).into_response()
             }
             Err(err) => {
@@ -156,13 +129,10 @@ pub async fn serve(state: AppState, request: Request, next: Next) -> Response {
 }
 
 /// Extract the crate name from the path by stripping the
-/// [`PATH_PREFIX_CRATES`] (or [`PATH_PREFIX_SVELTE_CRATES`]) prefix and
-/// returning the first path segment from the result. Returns `None` if the
-/// path was not prefixed with either.
+/// [`PATH_PREFIX_CRATES`] prefix and returning the first path segment from the
+/// result. Returns `None` if the path was not prefixed with [`PATH_PREFIX_CRATES`].
 fn extract_crate_name(path: &str) -> Option<&str> {
-    let suffix = path
-        .strip_prefix(PATH_PREFIX_CRATES)
-        .or_else(|| path.strip_prefix(PATH_PREFIX_SVELTE_CRATES))?;
+    let suffix = path.strip_prefix(PATH_PREFIX_CRATES)?;
     let len = suffix.find('/').unwrap_or(suffix.len());
     let krate = &suffix[..len];
     krate.is_empty().not().then_some(krate)
@@ -198,16 +168,6 @@ mod tests {
             ("/crates/", None),
             ("/dashboard/", None),
             ("/settings/profile", None),
-            // Temporary: until the Svelte app replaces the Ember app at `/`,
-            // it is served at `/svelte/`. These rows can be removed once the
-            // migration is complete.
-            ("/svelte/crates/tokio", Some("tokio")),
-            ("/svelte/crates/tokio/versions", Some("tokio")),
-            ("/svelte/crates/tokio/", Some("tokio")),
-            ("/svelte/", None),
-            ("/svelte/dashboard/", None),
-            ("/svelte/crates", None),
-            ("/svelte/crates/", None),
         ];
 
         for (path, expected) in PATHS.iter().copied() {
@@ -229,19 +189,6 @@ mod tests {
             ("/crates/", None),
             ("/dashboard/", None),
             ("/settings/profile", None),
-            // Temporary: until the Svelte app replaces the Ember app at `/`,
-            // it is served at `/svelte/`. These rows can be removed once the
-            // migration is complete.
-            (
-                "/svelte/crates/tokio",
-                Some("http://localhost:3000/og/tokio.png"),
-            ),
-            (
-                "/svelte/crates/tokio/versions",
-                Some("http://localhost:3000/og/tokio.png"),
-            ),
-            ("/svelte/", None),
-            ("/svelte/dashboard/", None),
         ];
 
         let og_image_base_url: Url = "http://localhost:3000/og/".parse().unwrap();
