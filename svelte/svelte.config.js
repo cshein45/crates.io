@@ -49,7 +49,7 @@ const config = {
           'unsafe-eval',
           // Hash of the inline `window.onerror` bootstrap script in `app.html`.
           // If the script content changes, regenerate this hash.
-          'sha256-n1+BB7Ckjcal1Pr7QNBh/dKRTtBQsIytFodRiIosXdE=',
+          'sha256-5Cz6+Mc7r7EqumpZ/iP8Bxa/U8yPvwbiANROmonMceg=',
         ],
         // Fira Sans is loaded from the Mozilla CDN via `@import` in `global.css`
         'style-src': ['self', 'unsafe-inline', 'https://code.cdn.mozilla.net'],
