@@ -61,12 +61,9 @@ api_client_test:
 
 e2e_test:
   - .github/workflows/**
-  - app/**
   - e2e/**
   - packages/crates-io-msw/**
-  - public/**
-  - tests/**
-  - ember-cli-build.js
+  - svelte/**
   - package.json
   - playwright.config.ts
   - pnpm-lock.yaml
