@@ -9,6 +9,7 @@ pub mod normalize_path;
 pub mod real_ip;
 mod require_user_agent;
 mod static_or_continue;
+mod svelte_redirect;
 mod update_metrics;
 
 use ::sentry::integrations::tower as sentry_tower;
@@ -68,15 +69,12 @@ pub fn apply_axum_middleware(state: AppState, router: Router<()>) -> Router {
             require_user_agent::require_user_agent,
         ))
         .layer(from_fn_with_state(state.clone(), block_traffic::middleware))
-        .layer(from_fn_with_state(
-            state.clone(),
-            common_headers::add_common_headers,
-        ))
+        .layer(from_fn(common_headers::add_common_headers))
+        .layer(conditional_layer(config.serve_html, || {
+            from_fn(svelte_redirect::redirect)
+        }))
         .layer(conditional_layer(env == Env::Development, || {
             from_fn(static_or_continue::serve_local_uploads)
-        }))
-        .layer(conditional_layer(config.serve_dist, || {
-            from_fn(static_or_continue::serve_dist)
         }))
         .layer(conditional_layer(config.serve_dist, || {
             from_fn(static_or_continue::serve_svelte)

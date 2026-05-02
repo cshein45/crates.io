@@ -14,12 +14,8 @@ pub async fn serve_local_uploads(request: Request, next: Next) -> Response {
     serve("local_uploads", None, request, next).await
 }
 
-pub async fn serve_dist(request: Request, next: Next) -> Response {
-    serve("dist", None, request, next).await
-}
-
 pub async fn serve_svelte(request: Request, next: Next) -> Response {
-    serve("svelte/build", Some("/svelte"), request, next).await
+    serve("svelte/build", None, request, next).await
 }
 
 async fn serve<P: AsRef<Path>>(

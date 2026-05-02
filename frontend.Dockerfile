@@ -21,4 +21,4 @@ COPY . /app
 # Install dependencies from previously downloaded pnpm store
 RUN pnpm install --offline
 
-ENTRYPOINT ["pnpm", "start:staging"]
+ENTRYPOINT ["pnpm", "--filter", "crates.io-svelte", "dev:docker"]

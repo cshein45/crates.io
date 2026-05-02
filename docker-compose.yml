@@ -9,7 +9,7 @@ x-backend: &backend
     GIT_REPO_URL: file:///app/tmp/index-bare
     GH_CLIENT_ID: ""
     GH_CLIENT_SECRET: ""
-    WEB_ALLOWED_ORIGINS: http://localhost:8888,http://localhost:4200
+    WEB_ALLOWED_ORIGINS: http://localhost:8888,http://localhost:5173
   links:
     - postgres
   volumes:
@@ -51,14 +51,15 @@ services:
     build:
       context: .
       dockerfile: frontend.Dockerfile
-    entrypoint: pnpm start:docker
+    entrypoint: pnpm --filter crates.io-svelte dev:docker
     links:
       - backend
     ports:
-      - 4200:4200
+      - 5173:5173
     volumes:
-      # Mount the app/ directory so live reload works
-      - ./app:/app/app:ro
+      # Mount the svelte/ sources so live reload works
+      - ./svelte/src:/app/svelte/src:ro
+      - ./svelte/static:/app/svelte/static:ro
 
 volumes:
   postgres-data:
